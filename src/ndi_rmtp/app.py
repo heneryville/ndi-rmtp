@@ -75,6 +75,15 @@ def build_app(
         if quality not in ("low", "medium", "high"):
             raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")
 
+        # Validate the source exists in the discovery cache.
+        sources = await discovery.list()
+        source_names = {s.name for s in sources}
+        if source not in source_names:
+            raise HTTPException(
+                status_code=409,
+                detail=f"NDI source not found: {source!r}",
+            )
+
         # Persist selection so it survives restarts
         cfg.stream.last_source = source
         cfg.stream.quality = quality

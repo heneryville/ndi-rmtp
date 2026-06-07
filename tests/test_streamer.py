@@ -256,6 +256,58 @@ async def test_auto_restart_skipped_after_fatal_pattern():
     assert streamer.status().state == "ERROR"
 
 
+async def test_starting_times_out_to_error_if_no_streaming_signal():
+    """If ndi-streamer doesn't emit Output #0 within STARTING_TIMEOUT_S, go to ERROR."""
+    from ndi_rmtp import streamer as streamer_mod
+    # Speed up the timeout for the test
+    original_timeout = streamer_mod.STARTING_TIMEOUT_S
+    streamer_mod.STARTING_TIMEOUT_S = 0.5
+    try:
+        # Script: emit non-trigger lines forever (no "Output #0,")
+        argv_prefix, env = _fake_args([
+            {"type": "stderr", "line": "starting up..."},
+            {"type": "sleep", "seconds": 5},
+        ])
+        cfg = _config()
+        streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+        streamer._spawn_argv = argv_prefix
+        streamer._spawn_env = env
+
+        await streamer.start("SRC", "key", "medium")
+        for _ in range(40):
+            if streamer.status().state == "ERROR":
+                break
+            await asyncio.sleep(0.05)
+        assert streamer.status().state == "ERROR"
+        assert "Timed out" in (streamer.status().last_error or "")
+        await streamer.stop()
+    finally:
+        streamer_mod.STARTING_TIMEOUT_S = original_timeout
+
+
+async def test_stop_from_error_dismisses_to_idle():
+    """User clicking Stop while in ERROR clears the error and returns to IDLE."""
+    cfg = _config()
+    streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+    argv_prefix, env = _fake_args([
+        {"type": "stderr", "line": "boom"},
+        {"type": "exit", "code": 1},
+    ])
+    streamer._spawn_argv = argv_prefix
+    streamer._spawn_env = env
+
+    await streamer.start("SRC", "key", "medium")
+    for _ in range(40):
+        if streamer.status().state == "ERROR":
+            break
+        await asyncio.sleep(0.05)
+    assert streamer.status().state == "ERROR"
+
+    await streamer.stop()
+    assert streamer.status().state == "IDLE"
+    assert streamer.status().last_error is None
+
+
 async def test_auto_restart_disabled_in_config_skips_retry():
     cfg = Config(
         auth=AuthConfig(username="admin", password="x"),

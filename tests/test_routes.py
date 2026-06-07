@@ -40,7 +40,10 @@ def streamer():
 @pytest.fixture
 def discovery():
     d = MagicMock()
-    d.list = AsyncMock(return_value=[Source(name="SRC1", address="10.0.0.5:5961")])
+    d.list = AsyncMock(return_value=[
+        Source(name="SRC1", address="10.0.0.5:5961"),
+        Source(name="NEW_SRC", address="10.0.0.6:5961"),
+    ])
     return d
 
 
@@ -79,7 +82,9 @@ def test_api_sources_returns_list(client, discovery):
     r = client.get("/api/sources", headers=_basic("admin", "hunter2"))
     assert r.status_code == 200
     body = r.json()
-    assert body == [{"name": "SRC1", "address": "10.0.0.5:5961"}]
+    names = [s["name"] for s in body]
+    assert "SRC1" in names
+    assert "NEW_SRC" in names
 
 
 def test_api_start_calls_streamer(client, streamer, tmp_path):
@@ -104,6 +109,16 @@ def test_api_start_persists_source_and_quality(client, tmp_path, config):
     reloaded = Config.load(config_path)
     assert reloaded.stream.last_source == "NEW_SRC"
     assert reloaded.stream.quality == "high"
+
+
+def test_api_start_rejects_unknown_source(client):
+    r = client.post(
+        "/api/start",
+        headers=_basic("admin", "hunter2"),
+        data={"source": "DOES NOT EXIST", "quality": "medium"},
+    )
+    assert r.status_code == 409
+    assert "not found" in r.text.lower()
 
 
 def test_api_stop_calls_streamer(client, streamer):

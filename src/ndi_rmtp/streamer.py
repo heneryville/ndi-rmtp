@@ -100,6 +100,7 @@ class Streamer:
         self._stopping_requested = False
         self._stop_grace_s = STOP_GRACE_S
         self._last_start_params: Optional[tuple[str, str, str]] = None
+        self._starting_watchdog_task: Optional[asyncio.Task] = None
         # Test seams (None in production):
         self._spawn_argv: Optional[list[str]] = None
         self._spawn_env: Optional[dict[str, str]] = None
@@ -148,6 +149,7 @@ class Streamer:
             )
             self._reader_task = asyncio.create_task(self._read_stderr())
             self._supervisor_task = asyncio.create_task(self._supervise())
+            self._starting_watchdog_task = asyncio.create_task(self._starting_watchdog())
 
     async def stop(self) -> None:
         async with self._lock:
@@ -160,6 +162,9 @@ class Streamer:
             if proc is None:
                 if self._sm.state == State.STOPPING:
                     self._sm.transition(State.IDLE, "no proc to stop")
+                elif self._sm.state == State.ERROR:
+                    self._sm.transition(State.IDLE, "dismiss error")
+                    self._last_error = None
                 return
 
         # Lock released — now we can wait on the subprocess without blocking callers.
@@ -183,6 +188,13 @@ class Streamer:
             except Exception:
                 pass
 
+        if self._starting_watchdog_task is not None:
+            self._starting_watchdog_task.cancel()
+            try:
+                await self._starting_watchdog_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         async with self._lock:
             if self._sm.state == State.STOPPING:
                 self._sm.transition(State.IDLE, "stop complete")
@@ -200,10 +212,28 @@ class Streamer:
                         if self._sm.state == State.STARTING:
                             self._started_at = time.monotonic()
                             self._sm.transition(State.STREAMING, "first frame")
+                            if self._starting_watchdog_task is not None:
+                                self._starting_watchdog_task.cancel()
                 if any(p in raw for p in FATAL_PATTERNS):
                     self._last_error = "YouTube rejected the stream key"
         except Exception as e:  # pragma: no cover
             logger.exception("stderr reader crashed: %s", e)
+
+    async def _starting_watchdog(self) -> None:
+        """If we don't reach STREAMING within STARTING_TIMEOUT_S, force ERROR."""
+        await asyncio.sleep(STARTING_TIMEOUT_S)
+        async with self._lock:
+            if self._sm.state == State.STARTING:
+                self._last_error = "Timed out waiting for first frame"
+                self._sm.transition(State.ERROR, "starting timeout")
+                proc = self._proc
+            else:
+                proc = None
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
 
     async def _supervise(self) -> None:
         assert self._proc is not None

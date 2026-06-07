@@ -185,3 +185,96 @@ async def test_double_start_rejected():
     with pytest.raises(RuntimeError):
         await streamer.start("SRC", "key", "medium")
     await streamer.stop()
+
+
+async def test_auto_restart_retries_transient_crash():
+    """Configured backoff: [0.1]. After one crash, streamer reattempts and succeeds."""
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="x"),
+        stream=StreamConfig(rtmp_url="rtmp://example/live"),
+        advanced=AdvancedConfig(auto_restart=True, restart_backoff_s=[0.1]),
+    )
+    streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+
+    # Script: crash immediately, then on retry, run forever
+    crash_argv, crash_env = _fake_args([
+        {"type": "stderr", "line": "boom"},
+        {"type": "exit", "code": 1},
+    ])
+    run_argv, run_env = _fake_args([
+        {"type": "stderr", "line": "Output #0, flv, to 'rtmp://example/live/key':"},
+        {"type": "sleep", "seconds": 2},
+    ])
+
+    call_count = {"n": 0}
+
+    def next_spawn():
+        call_count["n"] += 1
+        return (crash_argv, crash_env) if call_count["n"] == 1 else (run_argv, run_env)
+
+    streamer._next_spawn = next_spawn  # test seam
+
+    await streamer.start("SRC", "key", "medium")
+    # Wait up to 5 s for retry to land in STREAMING
+    for _ in range(100):
+        if streamer.status().state == "STREAMING":
+            break
+        await asyncio.sleep(0.05)
+    assert streamer.status().state == "STREAMING"
+    assert call_count["n"] >= 2
+
+    await streamer.stop()
+
+
+async def test_auto_restart_skipped_after_fatal_pattern():
+    """If YouTube rejected the key, do not retry — even with auto_restart=True."""
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="x"),
+        stream=StreamConfig(rtmp_url="rtmp://example/live"),
+        advanced=AdvancedConfig(auto_restart=True, restart_backoff_s=[0.1]),
+    )
+    streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+
+    argv, env = _fake_args([
+        {"type": "stderr", "line": "Output #0, flv, to 'rtmp://example/live/key':"},
+        {"type": "stderr", "line": "Server returned 403 Forbidden"},
+        {"type": "exit", "code": 1},
+    ])
+    streamer._spawn_argv = argv
+    streamer._spawn_env = env
+
+    await streamer.start("SRC", "key", "medium")
+    # Should land in ERROR and stay there
+    for _ in range(40):
+        if streamer.status().state == "ERROR":
+            break
+        await asyncio.sleep(0.05)
+    assert streamer.status().state == "ERROR"
+
+    # Wait long enough that a retry would have fired
+    await asyncio.sleep(0.5)
+    assert streamer.status().state == "ERROR"
+
+
+async def test_auto_restart_disabled_in_config_skips_retry():
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="x"),
+        stream=StreamConfig(rtmp_url="rtmp://example/live"),
+        advanced=AdvancedConfig(auto_restart=False, restart_backoff_s=[0.1]),
+    )
+    streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+    argv, env = _fake_args([
+        {"type": "stderr", "line": "boom"},
+        {"type": "exit", "code": 1},
+    ])
+    streamer._spawn_argv = argv
+    streamer._spawn_env = env
+
+    await streamer.start("SRC", "key", "medium")
+    for _ in range(40):
+        if streamer.status().state == "ERROR":
+            break
+        await asyncio.sleep(0.05)
+    assert streamer.status().state == "ERROR"
+    await asyncio.sleep(0.4)
+    assert streamer.status().state == "ERROR"

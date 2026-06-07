@@ -99,9 +99,11 @@ class Streamer:
         self._lock = asyncio.Lock()
         self._stopping_requested = False
         self._stop_grace_s = STOP_GRACE_S
+        self._last_start_params: Optional[tuple[str, str, str]] = None
         # Test seams (None in production):
         self._spawn_argv: Optional[list[str]] = None
         self._spawn_env: Optional[dict[str, str]] = None
+        self._next_spawn: Optional[Callable[[], tuple[list[str], dict[str, str]]]] = None
 
     def status(self) -> StreamerStatus:
         uptime = 0
@@ -122,16 +124,20 @@ class Streamer:
             self._stopping_requested = False
             self._log_buffer.clear()
             self._sm.transition(State.STARTING, "user start")
+            self._last_start_params = (source, stream_key, quality)
 
-            if self._spawn_argv is not None:
+            if self._next_spawn is not None:
+                argv, env_overrides = self._next_spawn()
+            elif self._spawn_argv is not None:
                 argv = self._spawn_argv
+                env_overrides = self._spawn_env or {}
             else:
                 argv = build_args(
                     self._binary, source, self._get_config().stream.rtmp_url, stream_key, quality
                 )
+                env_overrides = {}
             env = os.environ.copy()
-            if self._spawn_env is not None:
-                env.update(self._spawn_env)
+            env.update(env_overrides)
 
             logger.info("spawning ndi-streamer: %s", argv)
             self._proc = await asyncio.create_subprocess_exec(
@@ -208,6 +214,7 @@ class Streamer:
             except (asyncio.TimeoutError, Exception):
                 pass
 
+        should_retry = False
         async with self._lock:
             if self._stopping_requested:
                 return
@@ -218,3 +225,40 @@ class Streamer:
                     self._last_error = f"Subprocess exited rc={rc}: {tail}"
             self._proc = None
             self._started_at = None
+
+            cfg = self._get_config()
+            is_fatal = self._last_error and "rejected" in self._last_error.lower()
+            should_retry = (
+                cfg.advanced.auto_restart
+                and not is_fatal
+                and self._last_start_params is not None
+            )
+
+        if should_retry:
+            asyncio.create_task(self._retry_loop())
+
+    async def _retry_loop(self) -> None:
+        cfg = self._get_config()
+        for delay in cfg.advanced.restart_backoff_s:
+            await asyncio.sleep(delay)
+            async with self._lock:
+                if self._stopping_requested or self._sm.state != State.ERROR:
+                    return
+                if self._last_start_params is None:
+                    return
+                source, key, quality = self._last_start_params
+                # Transition out of ERROR so start() will accept it
+                self._sm.transition(State.IDLE, "auto-restart attempt")
+            try:
+                await self.start(source, key, quality)
+            except RuntimeError:
+                continue
+            # Watch what happens: success (STREAMING) or another crash (ERROR)
+            for _ in range(int(STARTING_TIMEOUT_S * 10) + 50):
+                state = self._sm.state
+                if state == State.STREAMING:
+                    return
+                if state == State.ERROR:
+                    break
+                await asyncio.sleep(0.1)
+        # Exhausted backoff; remain in ERROR

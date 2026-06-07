@@ -6,14 +6,13 @@
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
 </head>
-<body data-state="IDLE">
+<body data-state="IDLE" data-muted="false" data-sacrament="false">
   <header>
     <h1>NDI → YouTube Relay</h1>
     <div id="state-badge"
          hx-get="/api/status"
          hx-trigger="load, every 2s"
-         hx-swap="innerHTML"
-         hx-target="#status-region">…</div>
+         hx-swap="none">…</div>
   </header>
 
   <main>
@@ -24,9 +23,7 @@
           <select name="source"
                   hx-get="/api/sources"
                   hx-trigger="load, every 5s"
-                  hx-target="this"
-                  hx-swap="innerHTML"
-                  hx-include="this">
+                  hx-swap="none">
             <option value="{{ config.stream.last_source }}">{{ config.stream.last_source or "(searching…)" }}</option>
           </select>
         </label>
@@ -66,10 +63,39 @@ key = "xxxx-xxxx-xxxx-xxxx"</pre>
 
         <div class="actions">
           <button type="submit" id="start-btn">▶ Start Stream</button>
+          <button type="button" id="mute-btn"
+                  hx-post="/api/mute" hx-vals='{"muted": true}' hx-swap="none">🔇 Mute audio</button>
+          <button type="button" id="unmute-btn"
+                  hx-post="/api/mute" hx-vals='{"muted": false}' hx-swap="none">🔊 Unmute</button>
+          <button type="button" id="sacrament-btn"
+                  hx-post="/api/sacrament" hx-vals='{"enabled": true}' hx-swap="none">✝ Sacrament</button>
+          <button type="button" id="exit-sacrament-btn"
+                  hx-post="/api/sacrament" hx-vals='{"enabled": false}' hx-swap="none">↩ Exit Sacrament</button>
           <button type="button" id="stop-btn"
                   hx-post="/api/stop" hx-swap="none">■ Stop</button>
         </div>
       </form>
+    </section>
+
+    <section class="card" id="ptz-card" hidden>
+      <h2>PTZ Camera <small id="ptz-source"></small></h2>
+      <div id="presets-grid" class="presets-grid"></div>
+      <details class="ptz-manual">
+        <summary>Manual control</summary>
+        <div class="ptz-pad">
+          <button type="button" class="ptz-arrow" data-pan="0" data-tilt="0.5">↑</button>
+          <div class="ptz-row">
+            <button type="button" class="ptz-arrow" data-pan="-0.5" data-tilt="0">←</button>
+            <button type="button" class="ptz-stop" id="ptz-stop">◉</button>
+            <button type="button" class="ptz-arrow" data-pan="0.5" data-tilt="0">→</button>
+          </div>
+          <button type="button" class="ptz-arrow" data-pan="0" data-tilt="-0.5">↓</button>
+        </div>
+        <div class="ptz-zoom">
+          <button type="button" class="ptz-zoom-btn" data-zoom="0.5">＋ Zoom In</button>
+          <button type="button" class="ptz-zoom-btn" data-zoom="-0.5">－ Zoom Out</button>
+        </div>
+      </details>
     </section>
 
     <section class="card" id="status-region">
@@ -92,6 +118,8 @@ key = "xxxx-xxxx-xxxx-xxxx"</pre>
         const data = JSON.parse(evt.detail.xhr.responseText);
         const stateLower = data.state.toLowerCase();
         document.body.dataset.state = data.state;
+        document.body.dataset.muted = data.muted ? "true" : "false";
+        document.body.dataset.sacrament = data.sacrament_mode ? "true" : "false";
 
         // Build the new log text (plain text, escaping handled by textContent).
         const newLogText = (data.log_tail || []).join("\n");
@@ -160,6 +188,87 @@ key = "xxxx-xxxx-xxxx-xxxx"</pre>
           : `<option value="">(no sources found)</option>`;
       } catch (_) { /* ignore */ }
     });
+
+    // ---- PTZ ---------------------------------------------------------------
+    // Poll /api/ptz/info on a slower cadence than /api/status. Show/hide the
+    // PTZ card and render the preset grid based on the response.
+
+    async function postForm(url, fields = {}) {
+      const body = new URLSearchParams();
+      for (const [k, v] of Object.entries(fields)) body.append(k, String(v));
+      try { await fetch(url, { method: "POST", body }); } catch (_) { /* ignore */ }
+    }
+
+    let _ptzMoveSpeed = 0.4;
+    function renderPtzInfo(info) {
+      const card = document.getElementById("ptz-card");
+      if (!info || !info.supported) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      document.getElementById("ptz-source").textContent = info.source ? `— ${info.source}` : "";
+      _ptzMoveSpeed = info.move_speed ?? 0.4;
+      const recallSpeed = info.recall_speed ?? 0.5;
+      const grid = document.getElementById("presets-grid");
+      const presets = info.presets || [];
+      grid.innerHTML = presets.length
+        ? presets.map(p =>
+            `<button type="button" class="preset-btn"
+                     data-slot="${p.slot}" data-speed="${recallSpeed}">${escapeHtml(p.name)}</button>`
+          ).join("")
+        : `<p class="hint">No presets defined. Add some to <code>config.toml</code> under <code>[[ptz.presets]]</code>.</p>`;
+    }
+
+    async function fetchPtzInfo() {
+      try {
+        const r = await fetch("/api/ptz/info");
+        if (!r.ok) { return; }
+        renderPtzInfo(await r.json());
+      } catch (_) { /* ignore */ }
+    }
+    fetchPtzInfo();
+    setInterval(fetchPtzInfo, 10000);
+
+    // Preset button: POST /api/ptz/preset/<slot>
+    document.addEventListener("click", (evt) => {
+      const btn = evt.target.closest(".preset-btn");
+      if (!btn) return;
+      const slot = btn.dataset.slot;
+      const speed = btn.dataset.speed;
+      postForm(`/api/ptz/preset/${slot}`, { speed });
+    });
+
+    // D-pad press-and-hold pattern. Send command on mousedown/touchstart,
+    // send stop on release / pointer leave. NDI's pan_tilt is continuous.
+    function bindHoldButton(btn, onPress, onRelease) {
+      const start = (e) => { e.preventDefault(); onPress(); };
+      const end   = (e) => { e.preventDefault(); onRelease(); };
+      btn.addEventListener("mousedown", start);
+      btn.addEventListener("touchstart", start, {passive: false});
+      btn.addEventListener("mouseup", end);
+      btn.addEventListener("mouseleave", end);
+      btn.addEventListener("touchend", end);
+      btn.addEventListener("touchcancel", end);
+    }
+
+    for (const b of document.querySelectorAll(".ptz-arrow")) {
+      bindHoldButton(b,
+        () => postForm("/api/ptz/pan_tilt", {
+          pan:  Number(b.dataset.pan)  * _ptzMoveSpeed,
+          tilt: Number(b.dataset.tilt) * _ptzMoveSpeed,
+        }),
+        () => postForm("/api/ptz/pan_tilt", { pan: 0, tilt: 0 })
+      );
+    }
+    for (const b of document.querySelectorAll(".ptz-zoom-btn")) {
+      bindHoldButton(b,
+        () => postForm("/api/ptz/zoom", { speed: Number(b.dataset.zoom) * _ptzMoveSpeed }),
+        () => postForm("/api/ptz/zoom", { speed: 0 })
+      );
+    }
+    document.getElementById("ptz-stop").addEventListener("click",
+      () => postForm("/api/ptz/stop"));
   </script>
 </body>
 </html>

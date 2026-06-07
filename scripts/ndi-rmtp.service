@@ -12,6 +12,9 @@ ExecStart=/usr/local/bin/uv run --no-sync ndi-rmtp
 Restart=on-failure
 RestartSec=3
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Pin the config path on Pi so it lives in the service user's home (not in
+# /opt/ndi-rmtp/app, which would be the default project-local lookup).
+Environment=NDI_RMTP_CONFIG=/home/ndi-rmtp/.config/ndi-rmtp/config.toml
 
 # Hardening
 NoNewPrivileges=true

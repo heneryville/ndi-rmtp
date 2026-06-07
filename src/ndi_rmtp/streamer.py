@@ -39,10 +39,14 @@ STOP_GRACE_S = 5.0
 LOG_BUFFER_LINES = 200
 
 # Bitrates are in bits per second (ndi-streamer expects integers, no "k" suffix).
+# Sized for 640x360 (our standard output resolution); YouTube's recommendation
+# range for 360p @ 30fps is 400–1000 kbps. If we later support higher
+# resolutions, these will need to go up — see YouTube's recommended bitrate
+# table by resolution.
 QUALITY_PRESETS: dict[str, dict[str, int]] = {
-    "low":    {"v_bitrate_bps": 2_500_000, "a_bitrate_bps": 128_000},
-    "medium": {"v_bitrate_bps": 4_500_000, "a_bitrate_bps": 128_000},
-    "high":   {"v_bitrate_bps": 6_000_000, "a_bitrate_bps": 192_000},
+    "low":    {"v_bitrate_bps":   600_000, "a_bitrate_bps": 128_000},
+    "medium": {"v_bitrate_bps": 1_200_000, "a_bitrate_bps": 128_000},
+    "high":   {"v_bitrate_bps": 2_000_000, "a_bitrate_bps": 192_000},
 }
 
 
@@ -52,12 +56,18 @@ def build_args(
     rtmp_url: str,
     stream_key: str,
     quality: str,
+    muted: bool = False,
 ) -> list[str]:
-    """Build the ndi-streamer argv. Validated against the real binary in Phase 0."""
+    """Build the ndi-streamer argv. Validated against the real binary in Phase 0.
+
+    When `muted=True`, passes --no_audio (a local patch to ndi-streamer that
+    omits the audio stream from the FLV output entirely). YouTube accepts
+    video-only RTMP.
+    """
     preset = QUALITY_PRESETS[quality]
     base = rtmp_url.rstrip("/")
     output = f"{base}/{stream_key}"
-    return [
+    args = [
         str(binary),
         "-n", source,
         "-f", "rtmp",
@@ -67,6 +77,85 @@ def build_args(
         "--audio_bitrate", str(preset["a_bitrate_bps"]),
         "-o", output,
     ]
+    if muted:
+        args.append("--no_audio")
+    return args
+
+
+def build_sacrament_args(
+    ffmpeg: Path,
+    image_png: Path,
+    rtmp_url: str,
+    stream_key: str,
+    canvas_w: int = 640,
+    canvas_h: int = 360,
+) -> list[str]:
+    """Build an ffmpeg argv that loops a still PNG to RTMP.
+
+    Sends an h264 + silent-AAC stream at a fixed canvas size. Same stream
+    *shape* as ndi-streamer (video + audio) so YouTube treats the
+    reconnect as the same logical broadcast instead of a new session.
+    The SVG/PNG is scaled to fit canvas_w x canvas_h with letterbox/pillarbox
+    as needed (black bars), preserving aspect.
+    """
+    base = rtmp_url.rstrip("/")
+    output = f"{base}/{stream_key}"
+    vfilter = (
+        f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
+        f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"format=yuv420p"
+    )
+    return [
+        str(ffmpeg),
+        "-hide_banner",
+        "-loglevel", "info",
+        "-stats",  # emit `frame= N fps=...` progress lines so the UI log buffer shows life
+        "-loop", "1",
+        "-framerate", "30",
+        "-i", str(image_png),
+        "-f", "lavfi",
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-vf", vfilter,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-tune", "stillimage",
+        "-r", "30",
+        "-g", "60",
+        "-b:v", "1000k",
+        "-maxrate", "1000k",
+        "-bufsize", "2000k",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "48000",
+        "-f", "flv",
+        output,
+    ]
+
+
+SACRAMENT_PNG_CACHE = Path("/tmp/ndi-rmtp-sacrament.png")
+
+
+async def rasterize_svg(svg_path: Path, png_path: Path, width: int = 1920, height: int = 1080) -> None:
+    """Rasterize an SVG to PNG via rsvg-convert. Also accepts an existing PNG/JPG
+    by simply copying it (no rasterization needed)."""
+    if svg_path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+        png_path.write_bytes(svg_path.read_bytes())
+        return
+    proc = await asyncio.create_subprocess_exec(
+        "rsvg-convert",
+        "-w", str(width), "-h", str(height),
+        "--keep-aspect-ratio",
+        str(svg_path),
+        "-o", str(png_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"rsvg-convert failed (exit {proc.returncode}): "
+            f"{stderr.decode('utf-8', errors='replace').strip()}"
+        )
 
 
 class StreamerStatus:
@@ -75,12 +164,16 @@ class StreamerStatus:
         self.uptime_s = uptime_s
         self.last_error = last_error
         self.log_tail = log_tail
+        self.muted = False
+        self.sacrament_mode = False
 
     def to_dict(self) -> dict:
         return {
             "state": self.state,
             "uptime_s": self.uptime_s,
             "last_error": self.last_error,
+            "muted": self.muted,
+            "sacrament_mode": self.sacrament_mode,
             "log_tail": self.log_tail,
         }
 
@@ -101,6 +194,10 @@ class Streamer:
         self._stop_grace_s = STOP_GRACE_S
         self._last_start_params: Optional[tuple[str, str, str]] = None
         self._starting_watchdog_task: Optional[asyncio.Task] = None
+        # Mute is in-memory only — defaults unmuted on every process start.
+        self._muted = False
+        # Sacrament mode: in-memory; defaults off on process start.
+        self._sacrament_mode = False
         # Test seams (None in production):
         self._spawn_argv: Optional[list[str]] = None
         self._spawn_env: Optional[dict[str, str]] = None
@@ -110,12 +207,54 @@ class Streamer:
         uptime = 0
         if self._sm.state == State.STREAMING and self._started_at is not None:
             uptime = int(time.monotonic() - self._started_at)
-        return StreamerStatus(
+        s = StreamerStatus(
             state=self._sm.state.value,
             uptime_s=uptime,
             last_error=self._last_error,
             log_tail=list(self._log_buffer),
         )
+        s.muted = self._muted
+        s.sacrament_mode = self._sacrament_mode
+        return s
+
+    async def set_muted(self, muted: bool) -> None:
+        """Toggle audio. If currently streaming, restart the subprocess so the
+        change takes effect. YouTube may show a brief 'reconnecting' blip."""
+        if muted == self._muted:
+            return
+        self._muted = muted
+        # If we're not actively streaming, the new flag just gets picked up on
+        # the next start. Otherwise restart in place.
+        if self._sm.state not in (State.STARTING, State.STREAMING) or self._last_start_params is None:
+            return
+        source, key, quality = self._last_start_params
+        await self.stop()
+        await self.start(source, key, quality)
+
+    async def set_sacrament_mode(self, enabled: bool) -> None:
+        """Toggle sacrament mode. In sacrament mode, the NDI feed is replaced
+        with a still image (config.stream.sacrament_image) and audio is
+        suppressed. Implemented by swapping ndi-streamer for an ffmpeg
+        subprocess that loops the image. YouTube will briefly reconnect."""
+        if enabled == self._sacrament_mode:
+            return
+        if enabled:
+            cfg = self._get_config()
+            svg = cfg.stream.sacrament_image
+            if not svg:
+                raise RuntimeError(
+                    "sacrament_image not configured. Set [stream] sacrament_image "
+                    "in config.toml to a path."
+                )
+            svg_path = Path(svg).expanduser()
+            if not svg_path.exists():
+                raise FileNotFoundError(f"sacrament image not found: {svg_path}")
+            await rasterize_svg(svg_path, SACRAMENT_PNG_CACHE)
+        self._sacrament_mode = enabled
+        if self._sm.state in (State.STARTING, State.STREAMING) and self._last_start_params:
+            source, key, quality = self._last_start_params
+            await self.stop()
+            await self.start(source, key, quality)
 
     async def start(self, source: str, stream_key: str, quality: str) -> None:
         async with self._lock:
@@ -133,9 +272,19 @@ class Streamer:
                 argv = self._spawn_argv
                 env_overrides = self._spawn_env or {}
             else:
-                argv = build_args(
-                    self._binary, source, self._get_config().stream.rtmp_url, stream_key, quality
-                )
+                cfg = self._get_config()
+                if self._sacrament_mode:
+                    argv = build_sacrament_args(
+                        Path("ffmpeg"),
+                        SACRAMENT_PNG_CACHE,
+                        cfg.stream.rtmp_url,
+                        stream_key,
+                    )
+                else:
+                    argv = build_args(
+                        self._binary, source, cfg.stream.rtmp_url,
+                        stream_key, quality, muted=self._muted,
+                    )
                 env_overrides = {}
             env = os.environ.copy()
             env.update(env_overrides)

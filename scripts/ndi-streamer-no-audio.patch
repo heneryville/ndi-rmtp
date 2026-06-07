@@ -1,0 +1,61 @@
+diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
+index 399a4eb..d325eef 100644
+--- a/src/ndi_streamer.c
++++ b/src/ndi_streamer.c
+@@ -22,6 +22,7 @@ typedef struct AppOptions {
+     char audio_encoder[40];
+     int video_bitrate;
+     int audio_bitrate;
++    int no_audio;
+ } AppOptions;
+ 
+ AppOptions
+@@ -39,7 +40,7 @@ main(int argc, char **argv)
+         printf("[ERROR] codec '%s' not found\n", opts.video_encoder);
+         return 1;
+     }
+-    if (!avcodec_find_encoder_by_name(opts.audio_encoder)) {
++    if (!opts.no_audio && !avcodec_find_encoder_by_name(opts.audio_encoder)) {
+         printf("[ERROR] codec '%s' not found\n", opts.audio_encoder);
+         return 1;
+     }
+@@ -129,8 +130,10 @@ main(int argc, char **argv)
+ 
+         ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, width, height,
+                                   frame_rate, opts.video_bitrate);
+-        ffmpeg_output_setup_audio(fa_ctx, opts.audio_encoder,
+-                                  opts.audio_bitrate);
++        if (!opts.no_audio) {
++            ffmpeg_output_setup_audio(fa_ctx, opts.audio_encoder,
++                                      opts.audio_bitrate);
++        }
+ 
+         if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
+             printf("[ERROR] %s", fa_ctx->error_str);
+@@ -158,7 +161,7 @@ main(int argc, char **argv)
+                     break;
+                 }
+             }
+-            else if (res == NDIlib_frame_type_audio) {
++            else if (res == NDIlib_frame_type_audio && !opts.no_audio) {
+                 AVFrame *frame = fc_ndi_audio_frame_to_avframe(
+                         fc_ctx, fa_ctx->audio_codec_ctx, &a_frame);
+ 
+@@ -279,6 +282,7 @@ const ProgramOption options[] = {
+     { "h,help", "show help", 1 },
+     { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
+     { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
++    { "no_audio", "do not encode or output audio (video-only stream)", 1 },
+     { NULL, NULL, 0 },
+ };
+ 
+@@ -352,6 +356,9 @@ read_params(int argc, char **argv)
+                     res.audio_bitrate = (int)si;
+                 }
+             }
++            else if (strcmp(opt->name, "no_audio") == 0) {
++                res.no_audio = 1;
++            }
+             break;
+         }
+     }

@@ -37,12 +37,27 @@ class StreamConfig:
     active_key: str = ""
     rtmp_url: str = DEFAULT_RTMP_URL
     quality: str = "medium"
+    sacrament_image: str = ""  # path to an SVG (or PNG/JPG) shown in sacrament mode
 
     def find_key(self, name: str) -> StreamKey | None:
         return next((k for k in self.keys if k.name == name), None)
 
     def active(self) -> StreamKey | None:
         return self.find_key(self.active_key) if self.active_key else None
+
+
+@dataclass
+class PtzPreset:
+    """A named PTZ camera position. The slot is the NDI preset index (0-99)."""
+    name: str
+    slot: int
+
+
+@dataclass
+class PtzConfig:
+    presets: list[PtzPreset] = field(default_factory=list)
+    recall_speed: float = 0.5    # 0.0 slowest .. 1.0 fastest, used by preset recall
+    move_speed: float = 0.4      # 0.0 .. 1.0, used by d-pad and zoom hold
 
 
 @dataclass
@@ -58,6 +73,7 @@ class Config:
     auth: AuthConfig
     stream: StreamConfig = field(default_factory=StreamConfig)
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
+    ptz: PtzConfig = field(default_factory=PtzConfig)
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -65,10 +81,13 @@ class Config:
             data = tomllib.load(f)
         stream_data = dict(data.get("stream", {}))
         stream_data["keys"] = [StreamKey(**k) for k in stream_data.get("keys", [])]
+        ptz_data = dict(data.get("ptz", {}))
+        ptz_data["presets"] = [PtzPreset(**p) for p in ptz_data.get("presets", [])]
         return cls(
             auth=AuthConfig(**data["auth"]),
             stream=StreamConfig(**stream_data),
             advanced=AdvancedConfig(**data.get("advanced", {})),
+            ptz=PtzConfig(**ptz_data),
         )
 
     def save(self, path: Path) -> None:

@@ -13,6 +13,10 @@ uv.lock
 /bin/
 /build/
 
+# Local config — contains stream keys and admin password; never commit
+/config.toml
+/config.broken.toml
+
 # Dev artifacts
 .DS_Store
 *.log

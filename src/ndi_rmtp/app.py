@@ -15,16 +15,27 @@ from .config import Config
 from .ndi import NDIDiscovery
 from .streamer import Streamer
 
+# PtzController depends on cyndilib (an optional dependency). Only import for
+# type hints when available; the runtime treats `ptz` as an opaque object.
+if False:  # TYPE_CHECKING
+    from .ptz import PtzController  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+def _clamp_speed(v: float) -> float:
+    """Clamp PTZ speed values into NDI's expected [-1.0, 1.0] range."""
+    return max(-1.0, min(1.0, float(v)))
+
+
 def build_app(
     config_path: Path,
     streamer: Streamer,
     discovery: NDIDiscovery,
+    ptz: Optional["PtzController"] = None,  # noqa: F821 — string-only forward ref
 ) -> FastAPI:
     app = FastAPI(title="ndi-rmtp")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
@@ -111,6 +122,69 @@ def build_app(
     @app.post("/api/stop", dependencies=[Depends(require_auth)])
     async def api_stop():
         await streamer.stop()
+        return {"ok": True}
+
+    @app.post("/api/mute", dependencies=[Depends(require_auth)])
+    async def api_mute(muted: bool = Form(...)):
+        """Toggle audio output. If currently streaming, the subprocess restarts
+        so the new audio mode takes effect — YouTube may briefly reconnect."""
+        await streamer.set_muted(muted)
+        return {"ok": True, "muted": muted}
+
+    @app.post("/api/sacrament", dependencies=[Depends(require_auth)])
+    async def api_sacrament(enabled: bool = Form(...)):
+        """Toggle sacrament mode: video swapped for a still image, audio off."""
+        try:
+            await streamer.set_sacrament_mode(enabled)
+        except (FileNotFoundError, RuntimeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "sacrament_mode": enabled}
+
+    # ---- PTZ ---------------------------------------------------------------
+
+    @app.get("/api/ptz/info", dependencies=[Depends(require_auth)])
+    async def api_ptz_info():
+        if ptz is None:
+            return {"supported": False, "connected": False, "source": None, "presets": []}
+        return await ptz.info()
+
+    @app.post("/api/ptz/preset/{slot}", dependencies=[Depends(require_auth)])
+    async def api_ptz_recall(slot: int, speed: Optional[float] = Form(None)):
+        if ptz is None:
+            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+        if not (0 <= slot <= 99):
+            raise HTTPException(status_code=400, detail="slot must be 0..99")
+        await ptz.recall_preset(slot, speed)
+        return {"ok": True}
+
+    @app.post("/api/ptz/preset/{slot}/store", dependencies=[Depends(require_auth)])
+    async def api_ptz_store(slot: int):
+        if ptz is None:
+            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+        if not (0 <= slot <= 99):
+            raise HTTPException(status_code=400, detail="slot must be 0..99")
+        await ptz.store_preset(slot)
+        return {"ok": True}
+
+    @app.post("/api/ptz/pan_tilt", dependencies=[Depends(require_auth)])
+    async def api_ptz_pan_tilt(pan: float = Form(...), tilt: float = Form(...)):
+        if ptz is None:
+            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+        await ptz.pan_tilt(_clamp_speed(pan), _clamp_speed(tilt))
+        return {"ok": True}
+
+    @app.post("/api/ptz/zoom", dependencies=[Depends(require_auth)])
+    async def api_ptz_zoom(speed: float = Form(...)):
+        if ptz is None:
+            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+        await ptz.zoom(_clamp_speed(speed))
+        return {"ok": True}
+
+    @app.post("/api/ptz/stop", dependencies=[Depends(require_auth)])
+    async def api_ptz_stop():
+        if ptz is None:
+            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+        await ptz.stop()
         return {"ok": True}
 
     @app.post("/api/config", dependencies=[Depends(require_auth)])

@@ -17,6 +17,17 @@ from .config import Config
 from .ndi import NDIDiscovery
 from .streamer import Streamer
 
+# cyndilib (PTZ) is optional — without it the PTZ routes return 503 but the app
+# otherwise works. Helpful for environments where the wheel doesn't install.
+try:
+    from .ptz import PtzController  # noqa: F401
+    _ptz_available = True
+    _ptz_import_error: str | None = None
+except Exception as _e:  # pragma: no cover
+    PtzController = None  # type: ignore[assignment,misc]
+    _ptz_available = False
+    _ptz_import_error = repr(_e)
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,10 +46,16 @@ def resolve_binary() -> Path:
 
 
 def resolve_config_path() -> Path:
+    """Resolve where the config lives.
+
+    Order:
+      1. $NDI_RMTP_CONFIG (explicit override — set by systemd in production)
+      2. ./config.toml relative to the current working directory (project-local)
+    """
     override = os.environ.get("NDI_RMTP_CONFIG")
     if override:
-        return Path(override)
-    return Path.home() / ".config" / "ndi-rmtp" / "config.toml"
+        return Path(override).expanduser()
+    return Path.cwd() / "config.toml"
 
 
 def ensure_config(config_path: Path) -> Config:
@@ -87,7 +104,24 @@ def make_app() -> FastAPI:
     cfg = Config.load(config_path)
     discovery = NDIDiscovery(binary, ttl_s=float(cfg.advanced.discovery_ttl_s))
     streamer = Streamer(binary, config_getter=lambda: Config.load(config_path))
-    return build_app(config_path=config_path, streamer=streamer, discovery=discovery)
+
+    ptz = None
+    if _ptz_available:
+        try:
+            ptz = PtzController(config_getter=lambda: Config.load(config_path))
+            logger.info("PTZ controller ready")
+        except Exception as e:
+            logger.warning("PTZ controller failed to initialize: %s", e)
+            ptz = None
+    else:
+        logger.info("cyndilib not available (%s); PTZ disabled", _ptz_import_error)
+
+    return build_app(
+        config_path=config_path,
+        streamer=streamer,
+        discovery=discovery,
+        ptz=ptz,
+    )
 
 
 app = make_app()

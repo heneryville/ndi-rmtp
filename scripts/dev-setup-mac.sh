@@ -14,8 +14,9 @@ die() { printf "\n\033[1;31mxx\033[0m %s\n" "$*"; exit 1; }
 command -v brew >/dev/null || die "Homebrew not found. Install from https://brew.sh"
 
 say "Installing Homebrew packages"
-# ffmpeg + cmake + pkgconf for build; libndi cask for the NDI runtime dylib.
-brew install ffmpeg cmake pkgconf >/dev/null
+# ffmpeg + cmake + pkgconf for build; libndi cask for the NDI runtime dylib;
+# librsvg for sacrament-mode SVG → PNG rasterization.
+brew install ffmpeg cmake pkgconf librsvg >/dev/null
 brew install --cask libndi >/dev/null || true  # cask install is fine if already present
 # uv is the Python package manager.
 if ! command -v uv >/dev/null; then
@@ -50,6 +51,21 @@ if [[ ! -d "$BUILD_DIR/.git" ]]; then
 else
   say "ndi-streamer already cloned; pulling latest"
   git -C "$BUILD_DIR" pull --ff-only || true
+fi
+
+# Apply local patches. `git apply --check` tells us whether the patch
+# applies cleanly; --reverse --check tells us it's already applied.
+PATCH="$PROJECT_ROOT/scripts/ndi-streamer-no-audio.patch"
+if [[ -f "$PATCH" ]]; then
+  if git -C "$BUILD_DIR" apply --check "$PATCH" 2>/dev/null; then
+    say "Applying patch: no-audio support"
+    git -C "$BUILD_DIR" apply "$PATCH"
+  elif git -C "$BUILD_DIR" apply --reverse --check "$PATCH" 2>/dev/null; then
+    : # already applied, nothing to do
+  else
+    warn "Patch $PATCH does not apply cleanly to current ndi-streamer source"
+    exit 1
+  fi
 fi
 
 say "Building ndi-streamer"

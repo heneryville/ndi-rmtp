@@ -57,6 +57,55 @@ body[data-state="STOPPING"] #start-btn { display: none; }
 body[data-state="STOPPING"] #stop-btn { opacity: 0.6; pointer-events: none; }
 body[data-state="ERROR"] #start-btn::before { content: "↻ "; }
 
+/* Mute/Unmute: only visible while actively streaming, and exactly one of
+   them at a time based on the current muted state. Hidden during sacrament
+   mode (sacrament implies muted; the toggle would just confuse). */
+#mute-btn, #unmute-btn { display: none; }
+body[data-state="STREAMING"][data-sacrament="false"][data-muted="false"] #mute-btn { display: inline-block; background: #475569; }
+body[data-state="STREAMING"][data-sacrament="false"][data-muted="true"] #unmute-btn { display: inline-block; background: #ca8a04; }
+#mute-btn:hover { background: #334155; }
+#unmute-btn:hover { background: #a16207; }
+
+/* Sacrament mode: enter from STREAMING (non-sacrament), exit back to STREAMING (sacrament). */
+#sacrament-btn, #exit-sacrament-btn { display: none; }
+body[data-state="STREAMING"][data-sacrament="false"] #sacrament-btn { display: inline-block; background: #7c3aed; }
+body[data-state="STREAMING"][data-sacrament="true"] #exit-sacrament-btn { display: inline-block; background: #7c3aed; }
+#sacrament-btn:hover, #exit-sacrament-btn:hover { background: #6d28d9; }
+
+/* PTZ card */
+#ptz-card h2 small { color: #9aa0a6; font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.presets-grid {
+  display: grid; gap: 0.6rem; margin: 0.75rem 0 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.preset-btn {
+  background: #1e293b; color: #e8eaed; padding: 1rem 0.6rem;
+  font-size: 1rem; font-weight: 500; border-radius: 6px; border: 1px solid #334155;
+  cursor: pointer; transition: transform 0.05s, background 0.1s;
+}
+.preset-btn:hover { background: #334155; }
+.preset-btn:active { transform: scale(0.97); background: #475569; }
+
+.ptz-manual { margin-top: 0.5rem; }
+.ptz-manual summary {
+  color: #9aa0a6; font-size: 0.85rem; cursor: pointer; padding: 0.25rem 0;
+  user-select: none;
+}
+.ptz-pad {
+  display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+  margin-top: 0.75rem;
+}
+.ptz-row { display: flex; gap: 0.3rem; }
+.ptz-arrow, .ptz-stop, .ptz-zoom-btn {
+  background: #1e293b; color: #e8eaed; border: 1px solid #334155;
+  width: 3rem; height: 3rem; border-radius: 6px; font-size: 1.2rem;
+  cursor: pointer; user-select: none;
+}
+.ptz-stop { background: #374151; color: #9aa0a6; }
+.ptz-arrow:active, .ptz-zoom-btn:active { background: #475569; }
+.ptz-zoom { display: flex; gap: 0.5rem; margin-top: 0.75rem; justify-content: center; }
+.ptz-zoom-btn { width: auto; padding: 0 1rem; font-size: 0.9rem; }
+
 /* Config-managed key picker hint */
 .hint {
   display: block; color: #9aa0a6; font-size: 0.75rem; margin-top: 0.25rem;

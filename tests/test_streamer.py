@@ -64,7 +64,9 @@ def test_quality_presets_are_bps_integers():
         preset = QUALITY_PRESETS[name]
         assert isinstance(preset["v_bitrate_bps"], int)
         assert isinstance(preset["a_bitrate_bps"], int)
-        assert preset["v_bitrate_bps"] >= 1_000_000  # at least 1 Mbps for video
+        # Currently sized for 640x360 (YouTube recommends 400-1000 kbps for 360p);
+        # keep a sanity floor of 400 kbps.
+        assert preset["v_bitrate_bps"] >= 400_000
 
 
 # ---- start happy path --------------------------------------------------------

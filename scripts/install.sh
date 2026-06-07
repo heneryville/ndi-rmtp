@@ -16,7 +16,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config curl ca-certificates rsync \
     libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev \
-    ffmpeg python3.11 python3.11-venv
+    ffmpeg python3.11 python3.11-venv librsvg2-bin
 
 # --- uv as the service user ---
 say "Ensuring service user $SVC_USER exists"

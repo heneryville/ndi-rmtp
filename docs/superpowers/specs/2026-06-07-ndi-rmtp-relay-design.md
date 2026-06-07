@@ -2,7 +2,8 @@
 
 **Date:** 2026-06-07
 **Status:** Approved for planning
-**Target hardware:** Raspberry Pi 5 (4 GB or 8 GB), Raspberry Pi OS Bookworm/Trixie (aarch64)
+**Production target:** Raspberry Pi 5 (4 GB or 8 GB), Raspberry Pi OS Bookworm/Trixie (aarch64)
+**Supported dev/test target:** Apple Silicon macOS (arm64-darwin)
 
 ## Purpose
 
@@ -300,6 +301,50 @@ or Trixie aarch64:
 systemd unit highlights: `User=ndi-rmtp`, `Restart=on-failure`,
 `RestartSec=3`, `ProtectSystem=strict`, `ReadWritePaths=/home/ndi-rmtp/.config`.
 
+## Development on Apple Silicon macOS
+
+The same app runs on an Apple Silicon Mac for development and end-to-end
+testing against the user's existing NDI source. This is **dev-only** — there
+is no Mac equivalent of the systemd deployment, and `scripts/install.sh` is
+Pi-only.
+
+`scripts/dev-setup-mac.sh` (idempotent, run once per machine):
+
+1. Verify Homebrew is installed.
+2. `brew install ffmpeg cmake pkg-config uv`.
+3. Prompt operator to download the **NDI SDK for Apple** from
+   <https://ndi.video/sdk/> and accept the EULA. Install to the SDK's default
+   `/Library/NDI SDK for Apple/`. The script symlinks
+   `lib/macOS/libndi.dylib` to `/usr/local/lib/` and headers to
+   `/usr/local/include/ndi/`.
+4. `git clone` `ndi_streamer` into `build/ndi_streamer/`, build (CMake
+   auto-detects the macOS libs), and copy the binary to `./bin/` inside the
+   project (not `/usr/local/bin/` — we keep dev artifacts out of system paths).
+5. `uv sync` the Python app.
+
+Running locally:
+
+```
+uv run uvicorn ndi_rmtp.app:app --host 0.0.0.0 --port 8080 --reload
+```
+
+The app reads `./bin/ndi_streamer` first if it exists, otherwise falls back to
+`/usr/local/bin/ndi_streamer`. This lets the same code path work on Mac
+(project-local binary) and on the Pi (system-installed binary) without
+configuration.
+
+Config on Mac lives at `~/.config/ndi-rmtp/config.toml` — same as Pi.
+
+### Cross-platform module behavior
+
+- `streamer.py` resolves the `ndi_streamer` binary via the search-path rule
+  above; everything else (asyncio subprocess, signals, stderr parsing) is
+  identical on both OSes.
+- `config.py` uses `pathlib` and platform-neutral `os.chmod(path, 0o600)`.
+- `ndi.py` runs the same discovery command on both.
+- The integration test fixture starts an `nginx-rtmp` container via Docker
+  Desktop (Mac) or Docker Engine (Pi) — same compose file.
+
 ## Project layout
 
 ```
@@ -334,7 +379,8 @@ ndi-rmtp/
 │   ├── test_routes.py
 │   └── test_integration.py        # gated by @pytest.mark.integration
 ├── scripts/
-│   ├── install.sh
+│   ├── install.sh                 # Pi-only
+│   ├── dev-setup-mac.sh           # Apple Silicon dev setup
 │   └── ndi-rmtp.service
 └── README.md
 ```

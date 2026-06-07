@@ -1,0 +1,27 @@
+[Unit]
+Description=NDI to YouTube RTMP relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ndi-rmtp
+Group=ndi-rmtp
+WorkingDirectory=/opt/ndi-rmtp/app
+ExecStart=/usr/local/bin/uv run --no-sync ndi-rmtp
+Restart=on-failure
+RestartSec=3
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ndi-rmtp/.config
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

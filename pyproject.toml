@@ -10,6 +10,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "tomli-w>=1.0",
     "cyndilib>=0.1.1",
+    "pillow>=12.2.0",
 ]
 
 [project.optional-dependencies]

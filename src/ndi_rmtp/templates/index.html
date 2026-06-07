@@ -80,15 +80,16 @@ sacrament_image = "assets/sacrament/my_ward.svg"</pre>
 
     <section class="card" id="ptz-card" hidden>
       <h2>PTZ Camera <small id="ptz-source"></small></h2>
+      <img id="ptz-preview" class="ptz-preview" alt="Live camera preview" hidden>
       <div id="presets-grid" class="presets-grid"></div>
       <details class="ptz-manual">
         <summary>Manual control</summary>
         <div class="ptz-pad">
           <button type="button" class="ptz-arrow" data-pan="0" data-tilt="0.5">↑</button>
           <div class="ptz-row">
-            <button type="button" class="ptz-arrow" data-pan="-0.5" data-tilt="0">←</button>
+            <button type="button" class="ptz-arrow" data-pan="0.5" data-tilt="0">←</button>
             <button type="button" class="ptz-stop" id="ptz-stop">◉</button>
-            <button type="button" class="ptz-arrow" data-pan="0.5" data-tilt="0">→</button>
+            <button type="button" class="ptz-arrow" data-pan="-0.5" data-tilt="0">→</button>
           </div>
           <button type="button" class="ptz-arrow" data-pan="0" data-tilt="-0.5">↓</button>
         </div>
@@ -230,6 +231,33 @@ sacrament_image = "assets/sacrament/my_ward.svg"</pre>
     }
     fetchPtzInfo();
     setInterval(fetchPtzInfo, 10000);
+
+    // Preview: pull a JPEG snapshot at ~5 fps. We chain (request next only
+    // after the previous resolves) so a slow snapshot endpoint doesn't pile
+    // up overlapping fetches.
+    const previewImg = document.getElementById("ptz-preview");
+    async function refreshPreview() {
+      // Cheap cache-buster forces the browser to actually re-fetch.
+      const url = `/api/preview.jpg?t=${Date.now()}`;
+      // Load via fetch so we can detect 503 (no frame yet) gracefully.
+      try {
+        const r = await fetch(url);
+        if (r.ok) {
+          const blob = await r.blob();
+          if (previewImg._lastBlobUrl) URL.revokeObjectURL(previewImg._lastBlobUrl);
+          previewImg._lastBlobUrl = URL.createObjectURL(blob);
+          previewImg.src = previewImg._lastBlobUrl;
+          previewImg.hidden = false;
+        } else {
+          previewImg.hidden = true;
+        }
+      } catch (_) {
+        previewImg.hidden = true;
+      } finally {
+        setTimeout(refreshPreview, 200);
+      }
+    }
+    refreshPreview();
 
     // Preset button: POST /api/ptz/preset/<slot>
     document.addEventListener("click", (evt) => {

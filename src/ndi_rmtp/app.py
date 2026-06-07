@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -186,6 +186,19 @@ def build_app(
             raise HTTPException(status_code=503, detail="PTZ controller unavailable")
         await ptz.stop()
         return {"ok": True}
+
+    @app.get("/api/preview.jpg", dependencies=[Depends(require_auth)])
+    async def api_preview():
+        if ptz is None:
+            raise HTTPException(status_code=503, detail="No NDI receiver available")
+        jpg = await ptz.snapshot_jpeg()
+        if jpg is None:
+            raise HTTPException(status_code=503, detail="No frame yet")
+        return Response(
+            content=jpg,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
 
     @app.post("/api/config", dependencies=[Depends(require_auth)])
     def api_config(

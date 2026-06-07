@@ -1,9 +1,12 @@
 """PTZ camera control over NDI via cyndilib.
 
 A single Receiver is opened with the lowest-bandwidth mode (PTZ control packets
-are tiny; we don't need the video itself). The Receiver lazily connects to the
-currently-selected stream source when the first PTZ call comes in, and
-reconnects if the source changes.
+are tiny; we don't need full-quality video). The same receiver also feeds the
+preview snapshot endpoint via FrameSync — the operator can see, in the web UI,
+where the camera is actually pointing in near-real-time.
+
+The Receiver lazily connects to the currently-selected stream source when the
+first PTZ or preview call comes in, and reconnects if the source changes.
 
 All cyndilib calls are synchronous; we run them on a background thread via
 asyncio.to_thread so the FastAPI event loop stays responsive.
@@ -11,12 +14,22 @@ asyncio.to_thread so the FastAPI event loop stays responsive.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import threading
 import time
 from typing import Callable, Optional
 
-from cyndilib import Finder, Receiver, RecvBandwidth, RecvColorFormat
+import numpy as np
+from cyndilib import (
+    Finder,
+    FrameSync,
+    Receiver,
+    RecvBandwidth,
+    RecvColorFormat,
+    VideoFrameSync,
+)
+from PIL import Image
 
 from .config import Config
 
@@ -34,10 +47,15 @@ class PtzController:
         self._finder = Finder()
         self._finder.open()
         self._finder_warmed_at: Optional[float] = None
+        # BGRX_BGRA color format → 4-byte pixels we can hand straight to PIL.
+        # bandwidth_lowest → proxy-resolution frames; plenty for a preview pane.
         self._receiver = Receiver(
-            color_format=RecvColorFormat.fastest,
+            color_format=RecvColorFormat.BGRX_BGRA,
             bandwidth=RecvBandwidth.lowest,
         )
+        self._frame_sync = FrameSync(self._receiver)
+        self._video_frame = VideoFrameSync()
+        self._frame_sync.set_video_frame(self._video_frame)
         self._connected_to: Optional[str] = None
         self._lock = threading.Lock()
 
@@ -113,6 +131,39 @@ class PtzController:
             "recall_speed": cfg.ptz.recall_speed,
             "move_speed": cfg.ptz.move_speed,
         }
+
+    # ---- preview ----------------------------------------------------------------
+
+    def _snapshot_jpeg_sync(self, quality: int = 70) -> Optional[bytes]:
+        """Grab the latest frame from the receiver, encode as JPEG. Returns
+        None if no frame is available yet."""
+        with self._lock:
+            # capture_video pulls the latest frame the receiver has buffered;
+            # it does not block waiting for a fresh one.
+            self._frame_sync.capture_video()
+            vf = self._video_frame
+            if vf.xres <= 0 or vf.yres <= 0:
+                return None
+            arr = vf.get_array()
+            if arr is None or arr.size == 0:
+                return None
+            # BGRA (4 bytes per pixel) → RGB
+            flat = np.asarray(arr, dtype=np.uint8)
+            try:
+                bgra = flat.reshape(vf.yres, vf.xres, 4)
+            except ValueError:
+                return None
+            rgb = bgra[..., [2, 1, 0]]
+            img = Image.fromarray(rgb, mode="RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=False)
+            return buf.getvalue()
+
+    async def snapshot_jpeg(self, quality: int = 70) -> Optional[bytes]:
+        connected, _ = await self._ensure_connected()
+        if not connected:
+            return None
+        return await asyncio.to_thread(self._snapshot_jpeg_sync, quality)
 
     # ---- motion -----------------------------------------------------------------
 

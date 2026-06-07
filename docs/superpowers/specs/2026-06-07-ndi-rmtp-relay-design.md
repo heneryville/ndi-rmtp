@@ -247,35 +247,146 @@ The control plane never silently swallows an error. Every transition into
 
 ## Testing
 
-### Unit tests (pytest + pytest-asyncio)
+Validation is phased: each phase has a clear pass/fail signal and unblocks
+the next. Phases 0 and 2-5 are explicit checkpoints in the implementation
+plan; phase 1 (automated tests) runs continuously.
+
+### Phase 0 — Spike: prove the data path works (before any app code)
+
+Goal: confirm `ndi_streamer` can pull the user's test NDI source and push to
+RTMP on both Mac and Pi. If this fails, switch to the FFmpeg-with-libndi
+fallback before sinking effort into the control plane.
+
+Run on the Mac first, then repeat all steps on the Pi:
+
+1. **Build**: clone and build `ndi_streamer`. Pass = a working binary.
+2. **Source discovery**: run the binary with no args (or its `--list`
+   equivalent — confirmed during this step). Pass = the user's test NDI
+   source name appears in the output within 5 s.
+3. **Local loop**: start an `nginx-rtmp` container locally
+   (`docker run -p 1935:1935 tiangolo/nginx-rtmp`), run
+   `ndi_streamer -n "<source>" -o rtmp://localhost/live/test`, watch with
+   `ffplay rtmp://localhost/live/test`. Pass = video plays for ≥ 30 s with
+   no FPS warnings in stderr.
+4. **YouTube round-trip**: create a YouTube "unlisted" stream, run
+   `ndi_streamer -n "<source>" -o "rtmp://a.rtmp.youtube.com/live2/<key>"`,
+   open YouTube Studio. Pass = the stream goes live, health panel reads
+   "Excellent" or "Good" for ≥ 60 s, audio is in sync.
+5. **Sanity**: on the Pi only, run `htop` during step 4. Pass = total CPU
+   load ≤ 80 % at 1080p30 Medium preset; SoC temp ≤ 75 °C.
+
+If any step fails, the spike report (a short markdown in `docs/superpowers/`)
+explains what failed and which fallback we pick (FFmpeg-libndi, GStreamer,
+or roll-our-own).
+
+### Phase 1 — Automated tests (continuous, run in CI and locally)
+
+**Unit tests** (`pytest`, `pytest-asyncio`, no external services):
 
 - `test_config.py` — load, save, atomic write, missing-file bootstrap, bad
-  TOML → bootstrap, permission bits after write.
+  TOML → bootstrap, mode 0600 after write.
 - `test_state_machine.py` — every valid transition; rejected transitions
-  return an error without changing state.
-- `test_streamer.py` — subprocess control with a fake binary (`tests/fixtures/fake_ndi_streamer.py`)
-  that prints scripted stderr lines. Cover: clean start, immediate crash,
-  bad-stream-key pattern, SIGTERM/SIGKILL fallback, log ring buffer rotation.
+  return an error and leave state unchanged.
+- `test_streamer.py` — subprocess control against `tests/fixtures/fake_ndi_streamer.py`
+  (a Python script that emits scripted stderr). Cover: clean start, immediate
+  crash, bad-stream-key pattern detection, hang on stop → SIGKILL fallback,
+  log ring-buffer rotation, exponential backoff schedule.
 - `test_ndi_discovery.py` — fake binary emits scripted source lists; verify
-  parsing and TTL cache.
-- `test_auth.py` — Basic Auth accepts the configured user, rejects others,
-  rejects on missing header.
-- `test_routes.py` — FastAPI `TestClient`; verify every route's auth gate,
-  shape of responses, and that POST `/api/start` calls `streamer.start` with
-  the right args.
+  parsing, TTL cache, and refresh-on-expire.
+- `test_auth.py` — Basic Auth accepts configured user, rejects wrong
+  password, rejects missing header, exempts `/healthz` and `/static/*`.
+- `test_routes.py` — FastAPI `TestClient`; verify each route's auth gate,
+  response shape, and that POST `/api/start` calls `streamer.start` with the
+  right args. Use a mocked `streamer` to keep tests fast.
 
-### Integration test (`@pytest.mark.integration`, off by default)
+Pass = `uv run pytest` is green on both Mac and Pi.
 
-- Requires an NDI source on the LAN (env var `NDI_TEST_SOURCE`) and a local
-  `nginx-rtmp` container (started by the test).
-- Spawns real `ndi_streamer` for ~10 s, asserts FLV frames land in the local
-  RTMP sink, then SIGTERMs.
+**Integration test** (`@pytest.mark.integration`, opt-in via
+`pytest -m integration` or `RUN_INTEGRATION=1`):
 
-### Manual acceptance
+- Requires an NDI source on the LAN (env var `NDI_TEST_SOURCE`) and Docker.
+- Test starts `nginx-rtmp` in a container, spawns real `ndi_streamer` for
+  10 s pointed at the local RTMP, then asserts:
+  - FLV frames land at the RTMP sink (`ffprobe` reports a valid stream).
+  - Video stream has H.264, audio has AAC.
+  - Frame rate is within ±10 % of expected.
+- After assertions, SIGTERM the subprocess and confirm it exits cleanly
+  within 5 s.
 
-- On the Pi, stream the user's test NDI source to a YouTube "unlisted" event.
-  Confirm it shows up in YouTube Studio; let it run for 5 min; confirm clean
-  stop.
+Pass = integration test green on Mac with the user's test NDI source.
+
+### Phase 2 — Manual end-to-end on Mac
+
+Done from a browser on the Mac itself. This is the dev-loop acceptance.
+
+1. `uv run uvicorn ndi_rmtp.app:app --reload --port 8080`.
+2. Open `http://localhost:8080`, log in with the first-run password printed
+   to stderr.
+3. **Source dropdown** populates within 5 s and includes the user's test
+   NDI source.
+4. **Save stream key**: enter a YouTube unlisted key, save. Reload page —
+   the key is still there (masked). Inspect `~/.config/ndi-rmtp/config.toml`,
+   confirm mode 0600 and key present.
+5. **Start**: click Start. State transitions visibly IDLE → STARTING →
+   STREAMING within 10 s. Log tail shows `ndi_streamer` frame lines.
+6. **YouTube confirmation**: stream is live in YouTube Studio within 30 s
+   of clicking Start. Watch for 2 min, expect "Excellent" or "Good" health.
+7. **Stop**: click Stop. State transitions STREAMING → STOPPING → IDLE
+   within 5 s. YouTube Studio shows "Stream offline" within ~30 s.
+8. **Restart persistence**: Ctrl-C uvicorn, run it again. Source selection,
+   stream key, and quality preset are restored.
+
+### Phase 3 — Error-path checklist (Mac is fine; cheaper than Pi)
+
+Each item is a manual scenario with a specific expected UI/state response.
+
+| Scenario | How to induce | Expected behavior |
+|---|---|---|
+| Bad YouTube stream key | Save a deliberately wrong key, Start | State → ERROR within ~5 s, UI shows "YouTube rejected the stream key", **no auto-retry**, Dismiss returns to IDLE |
+| NDI source disappears mid-stream | Stop the test NDI source on its host | State → ERROR with "source unreachable"; auto-restart attempts per backoff; when source returns, next attempt succeeds → STREAMING |
+| `ndi_streamer` killed externally | `pkill ndi_streamer` while STREAMING | State → ERROR; auto-restart kicks in per backoff |
+| Wrong web password | Try logging in with wrong creds | 401, no info leak, no rate-limiter bypass |
+| Concurrent Start clicks | Spam the Start button | Only one subprocess spawns; subsequent clicks are 409 or no-ops |
+| Subprocess hang on stop | Fake binary that ignores SIGTERM (`tests/fixtures/`) | After 5 s, SIGKILL; state → IDLE; one log line records the SIGKILL |
+| Malformed config | Manually corrupt `config.toml`, restart service | Service logs the parse error and rebootstraps with a new random password |
+| Network drop mid-stream | Disable Wi-Fi for 30 s | ERROR + backoff; recovers on its own when network returns |
+
+Pass = every row behaves as described, observed by hand.
+
+### Phase 4 — Pi acceptance and burn-in
+
+Done on the actual Raspberry Pi 5, accessed from a browser on the Mac via
+`http://<pi-hostname>.local:8080`.
+
+1. **Install from scratch**: run `scripts/install.sh` on a fresh Pi OS
+   image. Pass = the script completes without manual intervention beyond
+   the NDI SDK EULA prompt, prints the LAN URL, and prints the first-run
+   admin password exactly once.
+2. **Boot persistence**: reboot the Pi. Service starts automatically
+   (`systemctl is-active ndi-rmtp` = `active`). UI is reachable.
+3. **End-to-end stream**: repeat Phase 2 steps 2-7, but driving the Pi
+   from a Mac browser. Pass criteria identical.
+4. **30-minute burn-in**: stream the test NDI source to YouTube unlisted
+   for 30 min continuous. During the run, on the Pi:
+   - `htop`: total CPU ≤ 80 % at 1080p30 Medium; no single core pinned
+     at 100 %.
+   - `vcgencmd measure_temp`: ≤ 75 °C steady-state.
+   - `free -h`: resident set stable, no leak.
+   - YouTube Studio: health "Excellent" or "Good" for ≥ 95 % of the run,
+     no dropped-frames warnings.
+   Pass = all four hold for the full 30 min.
+5. **Recovery after reboot mid-stream**: while STREAMING, `sudo reboot`.
+   After boot, service comes back in IDLE (we deliberately do not
+   auto-resume — too easy to start a stream the operator didn't intend).
+
+### What we are NOT testing
+
+- Streams above 1080p30 (not a goal for v1; revisit if needed).
+- Long-running (multi-day) stability — the 30-min burn-in is the
+  acceptance bar.
+- Multiple simultaneous streams (explicitly a non-goal).
+- Browsers other than current Firefox/Chrome/Safari on desktop. The UI is
+  intentionally simple and should work, but is not part of acceptance.
 
 ## Deployment
 

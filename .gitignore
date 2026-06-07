@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# uv
+uv.lock
+
+# Local builds
+/bin/
+/build/
+
+# Dev artifacts
+.DS_Store
+*.log

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ndi_rmtp.app import build_app
-from ndi_rmtp.config import AdvancedConfig, AuthConfig, Config, StreamConfig
+from ndi_rmtp.config import AdvancedConfig, AuthConfig, Config, StreamConfig, StreamKey
 from ndi_rmtp.ndi import Source
 
 
@@ -19,7 +19,11 @@ def _basic(user: str, password: str) -> dict[str, str]:
 def config(tmp_path) -> Config:
     return Config(
         auth=AuthConfig(username="admin", password="hunter2"),
-        stream=StreamConfig(stream_key="abc", last_source="SRC"),
+        stream=StreamConfig(
+            keys=[StreamKey(name="Primary", key="abc-key")],
+            active_key="Primary",
+            last_source="SRC",
+        ),
         advanced=AdvancedConfig(),
     )
 
@@ -130,17 +134,47 @@ def test_api_stop_calls_streamer(client, streamer):
     streamer.stop.assert_awaited_once()
 
 
-def test_api_config_updates_stream_key(client, tmp_path, config):
+def test_api_config_switches_active_key_and_quality(client, tmp_path):
+    """Switching active_key picks an existing entry from stream.keys (config-managed)."""
+    # Extend the on-disk config with a second key so the switch has something to point to.
     config_path = tmp_path / "config.toml"
+    cfg = Config.load(config_path)
+    cfg.stream.keys.append(StreamKey(name="Backup", key="zzz-key"))
+    cfg.save(config_path)
+
     r = client.post(
         "/api/config",
         headers=_basic("admin", "hunter2"),
-        data={"stream_key": "new-key-123", "quality": "low"},
+        data={"active_key": "Backup", "quality": "low"},
     )
     assert r.status_code == 200
     reloaded = Config.load(config_path)
-    assert reloaded.stream.stream_key == "new-key-123"
+    assert reloaded.stream.active_key == "Backup"
+    assert reloaded.stream.active().key == "zzz-key"
     assert reloaded.stream.quality == "low"
+
+
+def test_api_config_rejects_unknown_active_key(client):
+    r = client.post(
+        "/api/config",
+        headers=_basic("admin", "hunter2"),
+        data={"active_key": "Does Not Exist"},
+    )
+    assert r.status_code == 400
+    assert "unknown" in r.text.lower()
+
+
+def test_api_start_uses_active_keys_value(client, streamer):
+    """The stream_key passed to streamer.start is the *value* of the active key,
+    not its name."""
+    r = client.post(
+        "/api/start",
+        headers=_basic("admin", "hunter2"),
+        data={"source": "SRC1", "quality": "medium"},
+    )
+    assert r.status_code == 200
+    kwargs = streamer.start.call_args.kwargs
+    assert kwargs["stream_key"] == "abc-key"  # the .key of the "Primary" entry
 
 
 def test_protected_routes_reject_bad_password(client):

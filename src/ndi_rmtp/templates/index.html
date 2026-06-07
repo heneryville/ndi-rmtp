@@ -6,7 +6,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
 </head>
-<body>
+<body data-state="IDLE">
   <header>
     <h1>NDI → YouTube Relay</h1>
     <div id="state-badge"
@@ -32,15 +32,26 @@
         </label>
 
         <label>Stream Key
-          <span class="masked-row">
-            <input type="password" name="stream_key" id="stream-key"
-                   value="{{ config.stream.stream_key }}" readonly>
-            <button type="button" id="edit-key">Edit</button>
-            <button type="button" id="save-key" hidden
-                    hx-post="/api/config"
-                    hx-include="[name=stream_key]"
-                    hx-swap="none">Save</button>
-          </span>
+          {% if config.stream.keys %}
+          <select id="active-key-select"
+                  hx-post="/api/config"
+                  hx-trigger="change"
+                  hx-include="this"
+                  hx-swap="none"
+                  name="active_key">
+            {% for k in config.stream.keys %}
+            <option value="{{ k.name }}"
+                    {% if config.stream.active_key == k.name %}selected{% endif %}>{{ k.name }}</option>
+            {% endfor %}
+          </select>
+          <small class="hint">Keys are managed in <code>~/.config/ndi-rmtp/config.toml</code> under <code>[[stream.keys]]</code>.</small>
+          {% else %}
+          <p class="err">No stream keys configured. Add at least one to <code>~/.config/ndi-rmtp/config.toml</code>:
+            <pre class="code-sample">[[stream.keys]]
+name = "My Channel"
+key = "xxxx-xxxx-xxxx-xxxx"</pre>
+          </p>
+          {% endif %}
         </label>
 
         <fieldset>
@@ -63,37 +74,64 @@
 
     <section class="card" id="status-region">
       <h2>Status</h2>
-      <div class="placeholder">Loading…</div>
+      <p class="state state-idle">IDLE</p>
+      <pre class="logs"></pre>
     </section>
   </main>
 
   <script>
-    document.getElementById("edit-key").addEventListener("click", (e) => {
-      const input = document.getElementById("stream-key");
-      input.removeAttribute("readonly");
-      input.type = "text";
-      input.focus();
-      e.target.hidden = true;
-      document.getElementById("save-key").hidden = false;
-    });
-
-    // Render status JSON into the status region
+    // Render status JSON into the status region.
+    // Strategy: rebuild the visible state header each tick, but for the
+    // logs <pre>, only refresh content if it changed AND preserve the
+    // operator's scroll position. Auto-scroll to the bottom only if they
+    // were already at the bottom (the "tail -f" pattern).
     document.body.addEventListener("htmx:afterRequest", (evt) => {
       if (!evt.detail.xhr || evt.detail.pathInfo?.requestPath !== "/api/status") return;
       const region = document.getElementById("status-region");
       try {
         const data = JSON.parse(evt.detail.xhr.responseText);
-        const tail = (data.log_tail || []).slice(-20).map(l =>
-          `<code>${l.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</code>`
-        ).join("<br>");
-        region.innerHTML = `
+        const stateLower = data.state.toLowerCase();
+        document.body.dataset.state = data.state;
+
+        // Build the new log text (plain text, escaping handled by textContent).
+        const newLogText = (data.log_tail || []).join("\n");
+
+        let logsEl = region.querySelector(".logs");
+        const wasAtBottom = logsEl
+          ? (logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight) < 30
+          : true;
+        const savedScrollTop = logsEl ? logsEl.scrollTop : 0;
+
+        // Replace the state header (state + optional uptime + optional error).
+        // We rebuild only the header parts, not the logs, so scroll is preserved.
+        const headerHTML = `
           <h2>Status</h2>
-          <p class="state state-${data.state.toLowerCase()}">${data.state}
+          <p class="state state-${stateLower}">${data.state}
             ${data.state === 'STREAMING' ? `<small>${formatUptime(data.uptime_s)}</small>` : ''}
           </p>
-          ${data.last_error ? `<p class="err">${data.last_error}</p>` : ''}
-          <pre class="logs">${tail}</pre>
+          ${data.last_error ? `<p class="err">${escapeHtml(data.last_error)}</p>` : ''}
         `;
+
+        // Remove existing header siblings of .logs, keep the <pre>.
+        const oldHeader = Array.from(region.children).filter(el => el !== logsEl);
+        for (const el of oldHeader) el.remove();
+        // Insert the new header before the logs <pre>.
+        if (!logsEl) {
+          logsEl = document.createElement("pre");
+          logsEl.className = "logs";
+          region.appendChild(logsEl);
+        }
+        logsEl.insertAdjacentHTML("beforebegin", headerHTML);
+
+        // Update logs text only if it actually changed (avoids needless reflow).
+        if (logsEl.textContent !== newLogText) {
+          logsEl.textContent = newLogText;
+          if (wasAtBottom) {
+            logsEl.scrollTop = logsEl.scrollHeight;
+          } else {
+            logsEl.scrollTop = savedScrollTop;
+          }
+        }
       } catch (_) { /* ignore */ }
     });
 
@@ -104,7 +142,13 @@
       return `${h}:${m}:${sec}`;
     }
 
-    // Convert /api/sources JSON into <option>s
+    function escapeHtml(s) {
+      return s.replace(/[<>&"']/g, c => (
+        {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]
+      ));
+    }
+
+    // Convert /api/sources JSON into <option>s on the source <select>
     document.body.addEventListener("htmx:afterRequest", (evt) => {
       if (evt.detail.pathInfo?.requestPath !== "/api/sources") return;
       try {
@@ -112,7 +156,7 @@
         const select = document.querySelector("select[name=source]");
         const current = select.value;
         select.innerHTML = sources.length
-          ? sources.map(s => `<option value="${s.name}" ${s.name === current ? 'selected' : ''}>${s.name}</option>`).join("")
+          ? sources.map(s => `<option value="${escapeHtml(s.name)}" ${s.name === current ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join("")
           : `<option value="">(no sources found)</option>`;
       } catch (_) { /* ignore */ }
     });

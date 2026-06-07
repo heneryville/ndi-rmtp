@@ -44,13 +44,11 @@ def build_app(
     @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
     def index(request: Request):
         cfg = get_config()
-        masked_key = "•" * 12 if cfg.stream.stream_key else ""
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "config": cfg,
-                "masked_key": masked_key,
                 "qualities": ["low", "medium", "high"],
             },
         )
@@ -70,8 +68,12 @@ def build_app(
         quality: str = Form(...),
     ):
         cfg = get_config()
-        if not cfg.stream.stream_key:
-            raise HTTPException(status_code=400, detail="Stream key not set")
+        active = cfg.stream.active()
+        if active is None or not active.key:
+            raise HTTPException(
+                status_code=400,
+                detail="No active stream key. Add one in config.toml under [[stream.keys]] and set [stream] active_key.",
+            )
         if quality not in ("low", "medium", "high"):
             raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")
 
@@ -99,7 +101,7 @@ def build_app(
         try:
             await streamer.start(
                 source=connect_target,
-                stream_key=cfg.stream.stream_key,
+                stream_key=active.key,
                 quality=quality,
             )
         except RuntimeError as e:
@@ -113,12 +115,17 @@ def build_app(
 
     @app.post("/api/config", dependencies=[Depends(require_auth)])
     def api_config(
-        stream_key: Optional[str] = Form(None),
+        active_key: Optional[str] = Form(None),
         quality: Optional[str] = Form(None),
     ):
         cfg = get_config()
-        if stream_key is not None:
-            cfg.stream.stream_key = stream_key
+        if active_key is not None:
+            if cfg.stream.find_key(active_key) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown stream key {active_key!r}. Add it to config.toml under [[stream.keys]].",
+                )
+            cfg.stream.active_key = active_key
         if quality is not None:
             if quality not in ("low", "medium", "high"):
                 raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")

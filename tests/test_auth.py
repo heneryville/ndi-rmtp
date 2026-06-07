@@ -73,3 +73,29 @@ def test_credentials_compared_constant_time(config):
     """Sanity: we use secrets.compare_digest, not == . Smoke check only."""
     import secrets as s
     assert hasattr(s, "compare_digest")
+
+
+def test_protected_route_open_when_auth_disabled():
+    """When config.auth.enabled is False, the dependency is a no-op."""
+    disabled = Config(
+        auth=AuthConfig(username="admin", password="hunter2", enabled=False),
+        stream=StreamConfig(),
+        advanced=AdvancedConfig(),
+    )
+    client = TestClient(_app(disabled))
+    # No Authorization header at all — should still get through.
+    r = client.get("/protected")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+
+def test_auth_disabled_ignores_wrong_credentials():
+    """Disabled auth doesn't even check what was sent."""
+    disabled = Config(
+        auth=AuthConfig(username="admin", password="hunter2", enabled=False),
+        stream=StreamConfig(),
+        advanced=AdvancedConfig(),
+    )
+    client = TestClient(_app(disabled))
+    r = client.get("/protected", headers=_basic("nobody", "garbage"))
+    assert r.status_code == 200

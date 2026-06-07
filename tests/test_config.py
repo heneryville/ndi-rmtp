@@ -23,9 +23,14 @@ def test_bootstrap_two_calls_produce_different_passwords(tmp_path):
 
 
 def test_load_round_trips(tmp_path):
+    from ndi_rmtp.config import StreamKey
     path = tmp_path / "config.toml"
     original, _ = Config.bootstrap(path)
-    original.stream.stream_key = "abc-123"
+    original.stream.keys = [
+        StreamKey(name="Primary", key="abc-123"),
+        StreamKey(name="Backup", key="def-456"),
+    ]
+    original.stream.active_key = "Primary"
     original.stream.last_source = "TEST (Source)"
     original.stream.quality = "high"
     original.save(path)
@@ -33,9 +38,19 @@ def test_load_round_trips(tmp_path):
     loaded = Config.load(path)
     assert loaded.auth.username == original.auth.username
     assert loaded.auth.password == original.auth.password
-    assert loaded.stream.stream_key == "abc-123"
+    assert [k.name for k in loaded.stream.keys] == ["Primary", "Backup"]
+    assert loaded.stream.find_key("Backup").key == "def-456"
+    assert loaded.stream.active_key == "Primary"
+    assert loaded.stream.active().key == "abc-123"
     assert loaded.stream.last_source == "TEST (Source)"
     assert loaded.stream.quality == "high"
+
+
+def test_active_returns_none_when_unset(tmp_path):
+    path = tmp_path / "config.toml"
+    cfg, _ = Config.bootstrap(path)
+    # Default bootstrap: no keys configured.
+    assert cfg.stream.active() is None
 
 
 def test_save_uses_mode_0600(tmp_path):
@@ -50,7 +65,7 @@ def test_save_is_atomic_no_partial_file_on_crash(tmp_path, monkeypatch):
     """If serialization fails mid-write, the original file must remain intact."""
     path = tmp_path / "config.toml"
     config, _ = Config.bootstrap(path)
-    config.stream.stream_key = "original"
+    config.stream.last_source = "original"
     config.save(path)
 
     # Now sabotage tomli_w.dump to raise mid-save
@@ -59,13 +74,13 @@ def test_save_is_atomic_no_partial_file_on_crash(tmp_path, monkeypatch):
         raise RuntimeError("disk full")
     monkeypatch.setattr(tomli_w, "dump", boom)
 
-    config.stream.stream_key = "new"
+    config.stream.last_source = "new"
     with pytest.raises(RuntimeError):
         config.save(path)
 
     # Original file unchanged
     loaded = Config.load(path)
-    assert loaded.stream.stream_key == "original"
+    assert loaded.stream.last_source == "original"
     # No leftover temp files in the dir
     assert list(path.parent.glob(".tmp-*")) == []
 

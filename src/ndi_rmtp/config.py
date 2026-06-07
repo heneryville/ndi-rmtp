@@ -20,14 +20,29 @@ PASSWORD_LEN = 12
 class AuthConfig:
     username: str
     password: str
+    enabled: bool = True
+
+
+@dataclass
+class StreamKey:
+    """A named YouTube/RTMP stream key. Managed in config.toml, not the UI."""
+    name: str
+    key: str
 
 
 @dataclass
 class StreamConfig:
     last_source: str = ""
-    stream_key: str = ""
+    keys: list[StreamKey] = field(default_factory=list)
+    active_key: str = ""
     rtmp_url: str = DEFAULT_RTMP_URL
     quality: str = "medium"
+
+    def find_key(self, name: str) -> StreamKey | None:
+        return next((k for k in self.keys if k.name == name), None)
+
+    def active(self) -> StreamKey | None:
+        return self.find_key(self.active_key) if self.active_key else None
 
 
 @dataclass
@@ -48,9 +63,11 @@ class Config:
     def load(cls, path: Path) -> "Config":
         with open(path, "rb") as f:
             data = tomllib.load(f)
+        stream_data = dict(data.get("stream", {}))
+        stream_data["keys"] = [StreamKey(**k) for k in stream_data.get("keys", [])]
         return cls(
             auth=AuthConfig(**data["auth"]),
-            stream=StreamConfig(**data.get("stream", {})),
+            stream=StreamConfig(**stream_data),
             advanced=AdvancedConfig(**data.get("advanced", {})),
         )
 

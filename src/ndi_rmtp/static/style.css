@@ -44,5 +44,30 @@ button:hover { background: #1d4ed8; }
   background: #0a0c10; padding: 0.6rem 0.8rem; border-radius: 4px;
   font-size: 0.8rem; line-height: 1.4; max-height: 280px; overflow-y: auto;
   border: 1px solid #2a2e36; color: #c9ccd1; white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .logs code { display: block; }
+
+/* Start/Stop toggle based on streamer state. Only one is visible at a time. */
+body[data-state="IDLE"] #stop-btn,
+body[data-state="ERROR"] #stop-btn { display: none; }
+body[data-state="STARTING"] #start-btn,
+body[data-state="STREAMING"] #start-btn,
+body[data-state="STOPPING"] #start-btn { display: none; }
+body[data-state="STOPPING"] #stop-btn { opacity: 0.6; pointer-events: none; }
+body[data-state="ERROR"] #start-btn::before { content: "↻ "; }
+
+/* Config-managed key picker hint */
+.hint {
+  display: block; color: #9aa0a6; font-size: 0.75rem; margin-top: 0.25rem;
+}
+.hint code {
+  background: #0a0c10; padding: 1px 4px; border-radius: 3px;
+  font-size: 0.75rem;
+}
+.code-sample {
+  background: #0a0c10; padding: 0.5rem 0.7rem; border-radius: 4px;
+  font-size: 0.75rem; color: #c9ccd1; margin: 0.5rem 0 0; overflow-x: auto;
+  border: 1px solid #2a2e36;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

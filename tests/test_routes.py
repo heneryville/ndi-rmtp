@@ -87,7 +87,9 @@ def test_api_sources_returns_list(client, discovery):
     assert "NEW_SRC" in names
 
 
-def test_api_start_calls_streamer(client, streamer, tmp_path):
+def test_api_start_calls_streamer_with_discovered_address(client, streamer, tmp_path):
+    """The UI sends the friendly name; the route resolves it to the address
+    (ndi-streamer's -n flag uses p_url_address, which needs IP:port)."""
     r = client.post(
         "/api/start",
         headers=_basic("admin", "hunter2"),
@@ -96,7 +98,8 @@ def test_api_start_calls_streamer(client, streamer, tmp_path):
     assert r.status_code == 200
     streamer.start.assert_awaited_once()
     args = streamer.start.call_args
-    assert args.kwargs.get("source", args.args[0] if args.args else None) == "SRC1"
+    # The route must pass the discovered ADDRESS, not the friendly name.
+    assert args.kwargs.get("source") == "10.0.0.5:5961"
 
 
 def test_api_start_persists_source_and_quality(client, tmp_path, config):

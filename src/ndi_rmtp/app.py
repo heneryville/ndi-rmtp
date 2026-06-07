@@ -75,22 +75,33 @@ def build_app(
         if quality not in ("low", "medium", "high"):
             raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")
 
-        # Validate the source exists in the discovery cache.
+        # Validate the source exists in the discovery cache and resolve its address.
+        # ndi-streamer's -n flag puts its value into NDIlib_source_t.p_url_address,
+        # which expects an IP:port URL. Passing the friendly NDI name (e.g.,
+        # "MACHINE (Source)") causes NDI to fail to connect — the subprocess
+        # then hangs producing no stderr output. Send the discovered address
+        # instead, falling back to the name only if discovery has no address.
         sources = await discovery.list()
-        source_names = {s.name for s in sources}
-        if source not in source_names:
+        matched = next((s for s in sources if s.name == source), None)
+        if matched is None:
             raise HTTPException(
                 status_code=409,
                 detail=f"NDI source not found: {source!r}",
             )
 
-        # Persist selection so it survives restarts
+        # Persist the friendly name so the UI restores the selection across restarts.
         cfg.stream.last_source = source
         cfg.stream.quality = quality
         cfg.save(config_path)
 
+        connect_target = matched.address or matched.name
+
         try:
-            await streamer.start(source=source, stream_key=cfg.stream.stream_key, quality=quality)
+            await streamer.start(
+                source=connect_target,
+                stream_key=cfg.stream.stream_key,
+                quality=quality,
+            )
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))
         return {"ok": True}

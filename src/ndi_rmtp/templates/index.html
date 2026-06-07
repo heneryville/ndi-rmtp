@@ -1,2 +1,121 @@
 <!doctype html>
-<html><body>OK {{ config.auth.username }}</body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NDI → YouTube Relay</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  <header>
+    <h1>NDI → YouTube Relay</h1>
+    <div id="state-badge"
+         hx-get="/api/status"
+         hx-trigger="load, every 2s"
+         hx-swap="innerHTML"
+         hx-target="#status-region">…</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Configure</h2>
+      <form hx-post="/api/start" hx-swap="none" id="start-form">
+        <label>NDI Source
+          <select name="source"
+                  hx-get="/api/sources"
+                  hx-trigger="load, every 5s"
+                  hx-target="this"
+                  hx-swap="innerHTML"
+                  hx-include="this">
+            <option value="{{ config.stream.last_source }}">{{ config.stream.last_source or "(searching…)" }}</option>
+          </select>
+        </label>
+
+        <label>Stream Key
+          <span class="masked-row">
+            <input type="password" name="stream_key" id="stream-key"
+                   value="{{ config.stream.stream_key }}" readonly>
+            <button type="button" id="edit-key">Edit</button>
+            <button type="button" id="save-key" hidden
+                    hx-post="/api/config"
+                    hx-include="[name=stream_key]"
+                    hx-swap="none">Save</button>
+          </span>
+        </label>
+
+        <fieldset>
+          <legend>Quality</legend>
+          {% for q in qualities %}
+          <label>
+            <input type="radio" name="quality" value="{{ q }}"
+                   {% if config.stream.quality == q %}checked{% endif %}> {{ q }}
+          </label>
+          {% endfor %}
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" id="start-btn">▶ Start Stream</button>
+          <button type="button" id="stop-btn"
+                  hx-post="/api/stop" hx-swap="none">■ Stop</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" id="status-region">
+      <h2>Status</h2>
+      <div class="placeholder">Loading…</div>
+    </section>
+  </main>
+
+  <script>
+    document.getElementById("edit-key").addEventListener("click", (e) => {
+      const input = document.getElementById("stream-key");
+      input.removeAttribute("readonly");
+      input.type = "text";
+      input.focus();
+      e.target.hidden = true;
+      document.getElementById("save-key").hidden = false;
+    });
+
+    // Render status JSON into the status region
+    document.body.addEventListener("htmx:afterRequest", (evt) => {
+      if (!evt.detail.xhr || evt.detail.pathInfo?.requestPath !== "/api/status") return;
+      const region = document.getElementById("status-region");
+      try {
+        const data = JSON.parse(evt.detail.xhr.responseText);
+        const tail = (data.log_tail || []).slice(-20).map(l =>
+          `<code>${l.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</code>`
+        ).join("<br>");
+        region.innerHTML = `
+          <h2>Status</h2>
+          <p class="state state-${data.state.toLowerCase()}">${data.state}
+            ${data.state === 'STREAMING' ? `<small>${formatUptime(data.uptime_s)}</small>` : ''}
+          </p>
+          ${data.last_error ? `<p class="err">${data.last_error}</p>` : ''}
+          <pre class="logs">${tail}</pre>
+        `;
+      } catch (_) { /* ignore */ }
+    });
+
+    function formatUptime(s) {
+      const h = Math.floor(s / 3600).toString().padStart(2, '0');
+      const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
+      const sec = (s % 60).toString().padStart(2, '0');
+      return `${h}:${m}:${sec}`;
+    }
+
+    // Convert /api/sources JSON into <option>s
+    document.body.addEventListener("htmx:afterRequest", (evt) => {
+      if (evt.detail.pathInfo?.requestPath !== "/api/sources") return;
+      try {
+        const sources = JSON.parse(evt.detail.xhr.responseText);
+        const select = document.querySelector("select[name=source]");
+        const current = select.value;
+        select.innerHTML = sources.length
+          ? sources.map(s => `<option value="${s.name}" ${s.name === current ? 'selected' : ''}>${s.name}</option>`).join("")
+          : `<option value="">(no sources found)</option>`;
+      } catch (_) { /* ignore */ }
+    });
+  </script>
+</body>
+</html>

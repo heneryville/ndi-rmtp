@@ -1,0 +1,48 @@
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0; background: #0f1115; color: #e8eaed;
+}
+header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 1.5rem; background: #1a1d23; border-bottom: 1px solid #2a2e36;
+}
+header h1 { margin: 0; font-size: 1.2rem; }
+main { max-width: 720px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1rem; }
+.card {
+  background: #1a1d23; border: 1px solid #2a2e36; border-radius: 8px;
+  padding: 1.25rem;
+}
+.card h2 { margin-top: 0; font-size: 1rem; color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.04em; }
+label { display: block; margin-bottom: 0.85rem; font-size: 0.95rem; }
+input, select {
+  width: 100%; padding: 0.5rem 0.7rem; margin-top: 0.25rem;
+  background: #0f1115; border: 1px solid #2a2e36; border-radius: 4px;
+  color: #e8eaed; font: inherit;
+}
+.masked-row { display: flex; gap: 0.5rem; }
+.masked-row input { flex: 1; }
+fieldset { border: 1px solid #2a2e36; border-radius: 4px; padding: 0.5rem 0.75rem; margin-bottom: 0.85rem; }
+fieldset legend { padding: 0 0.4rem; color: #9aa0a6; font-size: 0.85rem; }
+fieldset label { display: inline-block; margin-right: 1rem; }
+button {
+  background: #2563eb; color: white; border: 0; padding: 0.6rem 1.2rem;
+  border-radius: 4px; font: inherit; cursor: pointer;
+}
+button:hover { background: #1d4ed8; }
+#stop-btn { background: #b91c1c; }
+#stop-btn:hover { background: #991b1b; }
+.actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.state { font-size: 1.4rem; font-weight: 600; margin: 0.5rem 0; }
+.state-idle { color: #9aa0a6; }
+.state-starting, .state-stopping { color: #fbbf24; }
+.state-streaming { color: #4ade80; }
+.state-error { color: #f87171; }
+.state small { font-size: 0.85rem; color: #9aa0a6; margin-left: 0.5rem; }
+.err { color: #f87171; background: #2a1818; padding: 0.5rem 0.75rem; border-radius: 4px; }
+.logs {
+  background: #0a0c10; padding: 0.6rem 0.8rem; border-radius: 4px;
+  font-size: 0.8rem; line-height: 1.4; max-height: 280px; overflow-y: auto;
+  border: 1px solid #2a2e36; color: #c9ccd1; white-space: pre-wrap;
+}
+.logs code { display: block; }

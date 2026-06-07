@@ -23,14 +23,14 @@ def test_bootstrap_two_calls_produce_different_passwords(tmp_path):
 
 
 def test_load_round_trips(tmp_path):
-    from ndi_rmtp.config import StreamKey
+    from ndi_rmtp.config import Ward
     path = tmp_path / "config.toml"
     original, _ = Config.bootstrap(path)
-    original.stream.keys = [
-        StreamKey(name="Primary", key="abc-123"),
-        StreamKey(name="Backup", key="def-456"),
+    original.stream.wards = [
+        Ward(name="Primary", key="abc-123"),
+        Ward(name="Backup", key="def-456"),
     ]
-    original.stream.active_key = "Primary"
+    original.stream.active_ward = "Primary"
     original.stream.last_source = "TEST (Source)"
     original.stream.quality = "high"
     original.save(path)
@@ -38,9 +38,9 @@ def test_load_round_trips(tmp_path):
     loaded = Config.load(path)
     assert loaded.auth.username == original.auth.username
     assert loaded.auth.password == original.auth.password
-    assert [k.name for k in loaded.stream.keys] == ["Primary", "Backup"]
-    assert loaded.stream.find_key("Backup").key == "def-456"
-    assert loaded.stream.active_key == "Primary"
+    assert [k.name for k in loaded.stream.wards] == ["Primary", "Backup"]
+    assert loaded.stream.find_ward("Backup").key == "def-456"
+    assert loaded.stream.active_ward == "Primary"
     assert loaded.stream.active().key == "abc-123"
     assert loaded.stream.last_source == "TEST (Source)"
     assert loaded.stream.quality == "high"

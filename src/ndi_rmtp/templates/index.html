@@ -28,25 +28,26 @@
           </select>
         </label>
 
-        <label>Stream Key
-          {% if config.stream.keys %}
-          <select id="active-key-select"
+        <label>Ward
+          {% if config.stream.wards %}
+          <select id="active-ward-select"
                   hx-post="/api/config"
                   hx-trigger="change"
                   hx-include="this"
                   hx-swap="none"
-                  name="active_key">
-            {% for k in config.stream.keys %}
-            <option value="{{ k.name }}"
-                    {% if config.stream.active_key == k.name %}selected{% endif %}>{{ k.name }}</option>
+                  name="active_ward">
+            {% for w in config.stream.wards %}
+            <option value="{{ w.name }}"
+                    {% if config.stream.active_ward == w.name %}selected{% endif %}>{{ w.name }}</option>
             {% endfor %}
           </select>
-          <small class="hint">Keys are managed in <code>~/.config/ndi-rmtp/config.toml</code> under <code>[[stream.keys]]</code>.</small>
+          <small class="hint">Wards are managed in <code>./config.toml</code> under <code>[[stream.wards]]</code>. Each carries its own stream key and sacrament overlay.</small>
           {% else %}
-          <p class="err">No stream keys configured. Add at least one to <code>~/.config/ndi-rmtp/config.toml</code>:
-            <pre class="code-sample">[[stream.keys]]
-name = "My Channel"
-key = "xxxx-xxxx-xxxx-xxxx"</pre>
+          <p class="err">No wards configured. Add at least one to <code>./config.toml</code>:
+            <pre class="code-sample">[[stream.wards]]
+name = "My Ward"
+key = "xxxx-xxxx-xxxx-xxxx"
+sacrament_image = "assets/sacrament/my_ward.svg"</pre>
           </p>
           {% endif %}
         </label>
@@ -68,7 +69,7 @@ key = "xxxx-xxxx-xxxx-xxxx"</pre>
           <button type="button" id="unmute-btn"
                   hx-post="/api/mute" hx-vals='{"muted": false}' hx-swap="none">🔊 Unmute</button>
           <button type="button" id="sacrament-btn"
-                  hx-post="/api/sacrament" hx-vals='{"enabled": true}' hx-swap="none">✝ Sacrament</button>
+                  hx-post="/api/sacrament" hx-vals='{"enabled": true}' hx-swap="none">Sacrament</button>
           <button type="button" id="exit-sacrament-btn"
                   hx-post="/api/sacrament" hx-vals='{"enabled": false}' hx-swap="none">↩ Exit Sacrament</button>
           <button type="button" id="stop-btn"

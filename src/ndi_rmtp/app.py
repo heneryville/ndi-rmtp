@@ -83,7 +83,7 @@ def build_app(
         if active is None or not active.key:
             raise HTTPException(
                 status_code=400,
-                detail="No active stream key. Add one in config.toml under [[stream.keys]] and set [stream] active_key.",
+                detail="No active ward. Add one in config.toml under [[stream.wards]] and set [stream] active_ward.",
             )
         if quality not in ("low", "medium", "high"):
             raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")
@@ -189,17 +189,17 @@ def build_app(
 
     @app.post("/api/config", dependencies=[Depends(require_auth)])
     def api_config(
-        active_key: Optional[str] = Form(None),
+        active_ward: Optional[str] = Form(None),
         quality: Optional[str] = Form(None),
     ):
         cfg = get_config()
-        if active_key is not None:
-            if cfg.stream.find_key(active_key) is None:
+        if active_ward is not None:
+            if cfg.stream.find_ward(active_ward) is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unknown stream key {active_key!r}. Add it to config.toml under [[stream.keys]].",
+                    detail=f"Unknown ward {active_ward!r}. Add it to config.toml under [[stream.wards]].",
                 )
-            cfg.stream.active_key = active_key
+            cfg.stream.active_ward = active_ward
         if quality is not None:
             if quality not in ("low", "medium", "high"):
                 raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")

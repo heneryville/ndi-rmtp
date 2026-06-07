@@ -24,26 +24,29 @@ class AuthConfig:
 
 
 @dataclass
-class StreamKey:
-    """A named YouTube/RTMP stream key. Managed in config.toml, not the UI."""
+class Ward:
+    """A broadcast target: a YouTube stream key plus the sacrament overlay
+    used during that ward's service. Wards can share keys (e.g., two wards
+    meeting in the same building publish to the same channel). Managed in
+    config.toml only, never via the UI."""
     name: str
     key: str
+    sacrament_image: str = ""  # SVG/PNG/JPG path; empty disables sacrament mode for this ward
 
 
 @dataclass
 class StreamConfig:
     last_source: str = ""
-    keys: list[StreamKey] = field(default_factory=list)
-    active_key: str = ""
+    wards: list[Ward] = field(default_factory=list)
+    active_ward: str = ""
     rtmp_url: str = DEFAULT_RTMP_URL
     quality: str = "medium"
-    sacrament_image: str = ""  # path to an SVG (or PNG/JPG) shown in sacrament mode
 
-    def find_key(self, name: str) -> StreamKey | None:
-        return next((k for k in self.keys if k.name == name), None)
+    def find_ward(self, name: str) -> Ward | None:
+        return next((w for w in self.wards if w.name == name), None)
 
-    def active(self) -> StreamKey | None:
-        return self.find_key(self.active_key) if self.active_key else None
+    def active(self) -> Ward | None:
+        return self.find_ward(self.active_ward) if self.active_ward else None
 
 
 @dataclass
@@ -80,7 +83,7 @@ class Config:
         with open(path, "rb") as f:
             data = tomllib.load(f)
         stream_data = dict(data.get("stream", {}))
-        stream_data["keys"] = [StreamKey(**k) for k in stream_data.get("keys", [])]
+        stream_data["wards"] = [Ward(**w) for w in stream_data.get("wards", [])]
         ptz_data = dict(data.get("ptz", {}))
         ptz_data["presets"] = [PtzPreset(**p) for p in ptz_data.get("presets", [])]
         return cls(

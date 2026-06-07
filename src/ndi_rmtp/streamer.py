@@ -57,12 +57,15 @@ def build_args(
     stream_key: str,
     quality: str,
     muted: bool = False,
+    sacrament_image: Optional[Path] = None,
 ) -> list[str]:
     """Build the ndi-streamer argv. Validated against the real binary in Phase 0.
 
-    When `muted=True`, passes --no_audio (a local patch to ndi-streamer that
-    omits the audio stream from the FLV output entirely). YouTube accepts
-    video-only RTMP.
+    When `muted=True`, passes --no_audio.
+
+    When `sacrament_image` is a path, passes --sacrament_image PATH so the
+    binary loads the image at startup. Sacrament mode is then toggled via
+    SIGUSR1 to the running subprocess; the RTMP session never restarts.
     """
     preset = QUALITY_PRESETS[quality]
     base = rtmp_url.rstrip("/")
@@ -79,57 +82,9 @@ def build_args(
     ]
     if muted:
         args.append("--no_audio")
+    if sacrament_image is not None:
+        args.extend(["--sacrament_image", str(sacrament_image)])
     return args
-
-
-def build_sacrament_args(
-    ffmpeg: Path,
-    image_png: Path,
-    rtmp_url: str,
-    stream_key: str,
-    canvas_w: int = 640,
-    canvas_h: int = 360,
-) -> list[str]:
-    """Build an ffmpeg argv that loops a still PNG to RTMP.
-
-    Sends an h264 + silent-AAC stream at a fixed canvas size. Same stream
-    *shape* as ndi-streamer (video + audio) so YouTube treats the
-    reconnect as the same logical broadcast instead of a new session.
-    The SVG/PNG is scaled to fit canvas_w x canvas_h with letterbox/pillarbox
-    as needed (black bars), preserving aspect.
-    """
-    base = rtmp_url.rstrip("/")
-    output = f"{base}/{stream_key}"
-    vfilter = (
-        f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
-        f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"format=yuv420p"
-    )
-    return [
-        str(ffmpeg),
-        "-hide_banner",
-        "-loglevel", "info",
-        "-stats",  # emit `frame= N fps=...` progress lines so the UI log buffer shows life
-        "-loop", "1",
-        "-framerate", "30",
-        "-i", str(image_png),
-        "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-vf", vfilter,
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-tune", "stillimage",
-        "-r", "30",
-        "-g", "60",
-        "-b:v", "1000k",
-        "-maxrate", "1000k",
-        "-bufsize", "2000k",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ar", "48000",
-        "-f", "flv",
-        output,
-    ]
 
 
 SACRAMENT_PNG_CACHE = Path("/tmp/ndi-rmtp-sacrament.png")
@@ -198,6 +153,9 @@ class Streamer:
         self._muted = False
         # Sacrament mode: in-memory; defaults off on process start.
         self._sacrament_mode = False
+        # Path to the PNG that was pre-rasterized for the current subprocess.
+        # None if the active ward at start() time had no sacrament_image.
+        self._last_sacrament_png: Optional[Path] = None
         # Test seams (None in production):
         self._spawn_argv: Optional[list[str]] = None
         self._spawn_env: Optional[dict[str, str]] = None
@@ -232,29 +190,37 @@ class Streamer:
         await self.start(source, key, quality)
 
     async def set_sacrament_mode(self, enabled: bool) -> None:
-        """Toggle sacrament mode. In sacrament mode, the NDI feed is replaced
-        with a still image (config.stream.sacrament_image) and audio is
-        suppressed. Implemented by swapping ndi-streamer for an ffmpeg
-        subprocess that loops the image. YouTube will briefly reconnect."""
+        """Toggle sacrament mode in the running ndi-streamer subprocess.
+
+        Sends SIGUSR1, which the patched ndi-streamer interprets as a toggle.
+        The subprocess (and its RTMP session) stays alive across the toggle,
+        so YouTube sees a seamless cut instead of a reconnect gap.
+
+        Idempotent: if `enabled` already matches our recorded state, no signal
+        is sent (so accidental double-clicks don't desync from the subprocess).
+        """
         if enabled == self._sacrament_mode:
             return
-        if enabled:
-            cfg = self._get_config()
-            svg = cfg.stream.sacrament_image
-            if not svg:
-                raise RuntimeError(
-                    "sacrament_image not configured. Set [stream] sacrament_image "
-                    "in config.toml to a path."
-                )
-            svg_path = Path(svg).expanduser()
-            if not svg_path.exists():
-                raise FileNotFoundError(f"sacrament image not found: {svg_path}")
-            await rasterize_svg(svg_path, SACRAMENT_PNG_CACHE)
+        if self._proc is None or self._proc.returncode is not None:
+            # Not streaming — just remember the desired state for the next start.
+            self._sacrament_mode = enabled
+            return
+        # The PNG must already be on disk (we pre-rasterized at start()). If
+        # the ward had no sacrament_image, the subprocess was started without
+        # --sacrament_image and the signal will toggle a flag that does
+        # nothing visible. We refuse that case for clarity.
+        if enabled and self._last_sacrament_png is None:
+            raise RuntimeError(
+                "Active ward has no sacrament_image; restart the stream "
+                "after configuring one."
+            )
+        try:
+            self._proc.send_signal(signal.SIGUSR1)
+        except ProcessLookupError:
+            # Subprocess just exited — fall back to deferred state.
+            self._sacrament_mode = enabled
+            return
         self._sacrament_mode = enabled
-        if self._sm.state in (State.STARTING, State.STREAMING) and self._last_start_params:
-            source, key, quality = self._last_start_params
-            await self.stop()
-            await self.start(source, key, quality)
 
     async def start(self, source: str, stream_key: str, quality: str) -> None:
         async with self._lock:
@@ -273,19 +239,31 @@ class Streamer:
                 env_overrides = self._spawn_env or {}
             else:
                 cfg = self._get_config()
-                if self._sacrament_mode:
-                    argv = build_sacrament_args(
-                        Path("ffmpeg"),
-                        SACRAMENT_PNG_CACHE,
-                        cfg.stream.rtmp_url,
-                        stream_key,
-                    )
-                else:
-                    argv = build_args(
-                        self._binary, source, cfg.stream.rtmp_url,
-                        stream_key, quality, muted=self._muted,
-                    )
+                # Pre-rasterize the active ward's sacrament SVG so the binary
+                # can load it lazily on the first SIGUSR1. None if this ward
+                # has no sacrament image.
+                self._last_sacrament_png = None
+                ward = cfg.stream.active()
+                if ward is not None and ward.sacrament_image:
+                    svg_path = Path(ward.sacrament_image).expanduser()
+                    if not svg_path.is_absolute():
+                        svg_path = Path.cwd() / svg_path
+                    if svg_path.exists():
+                        try:
+                            await rasterize_svg(svg_path, SACRAMENT_PNG_CACHE)
+                            self._last_sacrament_png = SACRAMENT_PNG_CACHE
+                        except Exception as e:
+                            logger.warning("sacrament rasterize failed: %s", e)
+                argv = build_args(
+                    self._binary, source, cfg.stream.rtmp_url,
+                    stream_key, quality,
+                    muted=self._muted,
+                    sacrament_image=self._last_sacrament_png,
+                )
                 env_overrides = {}
+            # New subprocess starts with sacrament_active = 0 (in C). Reset
+            # our flag so the UI matches.
+            self._sacrament_mode = False
             env = os.environ.copy()
             env.update(env_overrides)
 

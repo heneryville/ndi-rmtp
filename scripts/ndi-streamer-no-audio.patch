@@ -1,16 +1,155 @@
+diff --git a/src/ffmpeg_output.c b/src/ffmpeg_output.c
+index 0a91d62..817676d 100644
+--- a/src/ffmpeg_output.c
++++ b/src/ffmpeg_output.c
+@@ -107,7 +107,7 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
+     c_ctx->height = height;
+     c_ctx->framerate = framerate;
+     c_ctx->bit_rate = bitrate;
+-    c_ctx->gop_size = 12;
++    c_ctx->gop_size = 60;
+ 
+     if (ctx->o_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+         c_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+@@ -119,6 +119,16 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
+ 
+     if (strcmp(encoder_name, "libx264") == 0) {
+         av_dict_set(&codec_options, "preset", "veryfast", 0);
++        // Constant-bitrate output: x264 inserts filler NAL units to maintain
++        // the target bitrate even when the content is static (e.g., the
++        // sacrament overlay). YouTube warns when bitrate drops below the
++        // recommended floor; this keeps it pinned.
++        av_dict_set(&codec_options, "nal-hrd", "cbr", 0);
++        av_dict_set(&codec_options, "x264-params", "force-cfr=1", 0);
++        // CBR also requires matching min/max rate to target — set on the codec context.
++        c_ctx->rc_min_rate = bitrate;
++        c_ctx->rc_max_rate = bitrate;
++        c_ctx->rc_buffer_size = (int)(bitrate * 2);  // 2-second buffer (YouTube guideline)
+     }
+ 
+     if (codec->id == AV_CODEC_ID_H264) {
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..d325eef 100644
+index 399a4eb..58fecf8 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
-@@ -22,6 +22,7 @@ typedef struct AppOptions {
+@@ -5,6 +5,13 @@
+ // https://opensource.org/licenses/MIT.
+ 
+ #include <stdio.h>
++#include <signal.h>
++#include <string.h>
++
++#include <libavcodec/avcodec.h>
++#include <libavformat/avformat.h>
++#include <libswscale/swscale.h>
++#include <libavutil/imgutils.h>
+ 
+ #include <Processing.NDI.Lib.h>
+ 
+@@ -22,8 +29,102 @@ typedef struct AppOptions {
      char audio_encoder[40];
      int video_bitrate;
      int audio_bitrate;
 +    int no_audio;
++    char sacrament_image[512];  // path to an image (PNG/JPG); enables --sacrament toggle
  } AppOptions;
  
++// Sacrament mode: when active, the video frame is replaced with the loaded
++// image, and audio samples are zeroed. Toggled by SIGUSR1. The subprocess
++// (and therefore the RTMP session to YouTube) stays alive across toggles, so
++// the viewer sees a seamless cut rather than YouTube's "reconnecting" gap.
++static volatile sig_atomic_t sacrament_active = 0;
++static AVFrame *sacrament_frame = NULL;  // pre-scaled to encoder dims, YUV420P
++
++static void
++on_sigusr1(int signum)
++{
++    (void)signum;
++    sacrament_active = !sacrament_active;
++}
++
++// Load `path` (any image format ffmpeg can decode), scale to target dims
++// in YUV420P, return an AVFrame owning its own buffers. Caller frees with
++// av_frame_free().
++static AVFrame *
++load_image_as_yuv420p(const char *path, int target_w, int target_h)
++{
++    AVFormatContext *fmt = NULL;
++    AVCodecContext *cdc = NULL;
++    AVFrame *decoded = NULL;
++    AVFrame *output = NULL;
++    struct SwsContext *sws = NULL;
++    AVPacket *pkt = NULL;
++    int vstream = -1;
++
++    if (avformat_open_input(&fmt, path, NULL, NULL) < 0) {
++        fprintf(stderr, "[sacrament] cannot open %s\n", path);
++        return NULL;
++    }
++    if (avformat_find_stream_info(fmt, NULL) < 0) goto cleanup;
++    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
++        if (fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
++            vstream = (int)i;
++            break;
++        }
++    }
++    if (vstream < 0) goto cleanup;
++
++    const AVCodec *codec = avcodec_find_decoder(fmt->streams[vstream]->codecpar->codec_id);
++    if (!codec) goto cleanup;
++    cdc = avcodec_alloc_context3(codec);
++    if (!cdc) goto cleanup;
++    if (avcodec_parameters_to_context(cdc, fmt->streams[vstream]->codecpar) < 0) goto cleanup;
++    if (avcodec_open2(cdc, codec, NULL) < 0) goto cleanup;
++
++    pkt = av_packet_alloc();
++    decoded = av_frame_alloc();
++    if (!pkt || !decoded) goto cleanup;
++
++    int got = 0;
++    while (av_read_frame(fmt, pkt) >= 0) {
++        if (pkt->stream_index == vstream) {
++            if (avcodec_send_packet(cdc, pkt) == 0 &&
++                avcodec_receive_frame(cdc, decoded) == 0) {
++                got = 1;
++                av_packet_unref(pkt);
++                break;
++            }
++        }
++        av_packet_unref(pkt);
++    }
++    if (!got) goto cleanup;
++
++    output = av_frame_alloc();
++    if (!output) goto cleanup;
++    output->format = AV_PIX_FMT_YUV420P;
++    output->width = target_w;
++    output->height = target_h;
++    if (av_frame_get_buffer(output, 32) < 0) { av_frame_free(&output); goto cleanup; }
++
++    sws = sws_getContext(
++        decoded->width, decoded->height, (enum AVPixelFormat)decoded->format,
++        target_w, target_h, AV_PIX_FMT_YUV420P,
++        SWS_BILINEAR, NULL, NULL, NULL);
++    if (!sws) { av_frame_free(&output); goto cleanup; }
++    sws_scale(sws,
++              (const uint8_t *const *)decoded->data, decoded->linesize,
++              0, decoded->height,
++              output->data, output->linesize);
++
++cleanup:
++    if (sws) sws_freeContext(sws);
++    if (decoded) av_frame_free(&decoded);
++    if (pkt) av_packet_free(&pkt);
++    if (cdc) avcodec_free_context(&cdc);
++    if (fmt) avformat_close_input(&fmt);
++    return output;
++}
++
  AppOptions
-@@ -39,7 +40,7 @@ main(int argc, char **argv)
+ read_params(int argc, char **argv);
+ 
+@@ -39,7 +140,7 @@ main(int argc, char **argv)
          printf("[ERROR] codec '%s' not found\n", opts.video_encoder);
          return 1;
      }
@@ -19,7 +158,17 @@ index 399a4eb..d325eef 100644
          printf("[ERROR] codec '%s' not found\n", opts.audio_encoder);
          return 1;
      }
-@@ -129,8 +130,10 @@ main(int argc, char **argv)
+@@ -71,6 +172,9 @@ main(int argc, char **argv)
+         return 1;
+     }
+ 
++    // SIGUSR1 toggles sacrament mode without disturbing the RTMP session.
++    signal(SIGUSR1, on_sigusr1);
++
+     char ffmpeg_output_format[30];
+     if (strcmp(opts.output_format, "rtmp") == 0) {
+         snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
+@@ -129,8 +233,10 @@ main(int argc, char **argv)
  
          ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, width, height,
                                    frame_rate, opts.video_bitrate);
@@ -32,29 +181,88 @@ index 399a4eb..d325eef 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -158,7 +161,7 @@ main(int argc, char **argv)
+@@ -148,8 +254,35 @@ main(int argc, char **argv)
+                     break;
+                 }
+ 
+-                AVFrame *frame = fc_ndi_video_frame_to_avframe(
+-                        fc_ctx, fa_ctx->video_codec_ctx, &v_frame);
++                AVFrame *frame;
++                if (sacrament_active) {
++                    // Lazy-load the image now that we know encoder dims.
++                    if (sacrament_frame == NULL && strlen(opts.sacrament_image) > 0) {
++                        sacrament_frame = load_image_as_yuv420p(
++                                opts.sacrament_image, width, height);
++                        if (sacrament_frame == NULL) {
++                            fprintf(stderr,
++                                    "[sacrament] failed to load %s; falling back to live\n",
++                                    opts.sacrament_image);
++                        }
++                    }
++                    if (sacrament_frame != NULL) {
++                        // Clone shares the underlying buffer (refcount +1); send_video_frame
++                        // will av_frame_unref it without freeing the cached original.
++                        frame = av_frame_clone(sacrament_frame);
++                        // Use the NDI frame's timing so PTS stays monotonic.
++                        frame->pts = fc_ctx->frame_index * AV_TIME_BASE
++                                * v_frame.frame_rate_D / v_frame.frame_rate_N;
++                        fc_ctx->frame_index++;
++                    } else {
++                        // No image loaded — fall through to live.
++                        frame = fc_ndi_video_frame_to_avframe(
++                                fc_ctx, fa_ctx->video_codec_ctx, &v_frame);
++                    }
++                } else {
++                    frame = fc_ndi_video_frame_to_avframe(
++                            fc_ctx, fa_ctx->video_codec_ctx, &v_frame);
++                }
+ 
+                 NDIlib_recv_free_video_v2(recv, &v_frame);
+ 
+@@ -158,7 +291,15 @@ main(int argc, char **argv)
                      break;
                  }
              }
 -            else if (res == NDIlib_frame_type_audio) {
 +            else if (res == NDIlib_frame_type_audio && !opts.no_audio) {
++                // During sacrament, send silence (preserves stream shape, no
++                // muxer hiccup) instead of skipping audio frames entirely.
++                if (sacrament_active && a_frame.p_data && a_frame.no_samples > 0) {
++                    memset(a_frame.p_data, 0,
++                           (size_t)a_frame.no_samples
++                                   * (size_t)a_frame.no_channels
++                                   * sizeof(float));
++                }
                  AVFrame *frame = fc_ndi_audio_frame_to_avframe(
                          fc_ctx, fa_ctx->audio_codec_ctx, &a_frame);
  
-@@ -279,6 +282,7 @@ const ProgramOption options[] = {
+@@ -189,6 +330,8 @@ main(int argc, char **argv)
+ 
+     free_frame_converter_ctx(&fc_ctx);
+ 
++    if (sacrament_frame) av_frame_free(&sacrament_frame);
++
+     NDIlib_recv_destroy(recv);
+ 
+     NDIlib_destroy();
+@@ -279,6 +422,8 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
 +    { "no_audio", "do not encode or output audio (video-only stream)", 1 },
++    { "sacrament_image", "path to an image (PNG/JPG) used while SIGUSR1 is toggled on", 0 },
      { NULL, NULL, 0 },
  };
  
-@@ -352,6 +356,9 @@ read_params(int argc, char **argv)
+@@ -352,6 +497,12 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }
 +            else if (strcmp(opt->name, "no_audio") == 0) {
 +                res.no_audio = 1;
++            }
++            else if (strcmp(opt->name, "sacrament_image") == 0) {
++                snprintf(res.sacrament_image, sizeof res.sacrament_image, "%s", optarg);
 +            }
              break;
          }

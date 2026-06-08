@@ -1,0 +1,188 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A LAN appliance that pulls NDI video from a PTZ camera, re-broadcasts to YouTube
+Live over RTMP, and exposes a web UI for control (start/stop, mute, sacrament
+overlay, PTZ presets + manual + live preview). Built primarily for streaming
+LDS sacrament meetings; multiple wards share one appliance via config-managed
+ward entries that each carry their own YouTube stream key and overlay image.
+
+Production target is Raspberry Pi 5 (not yet validated — see `TODO.md`).
+Development target is Apple Silicon macOS.
+
+## Run / test / build
+
+```sh
+# One-time dev setup (Mac).
+./scripts/dev-setup-mac.sh
+
+# Run the app. Reads config.toml at the project root (override with
+# $NDI_RMTP_CONFIG). Listens on 0.0.0.0:8080.
+uv run ndi-rmtp
+
+# Tests. 68 unit tests run by default in ~6s; integration test is opt-in.
+uv run pytest
+uv run pytest tests/test_streamer.py -v          # one test file
+uv run pytest tests/test_streamer.py::test_auto_restart_retries_transient_crash -v   # one test
+uv run pytest -m integration                     # requires Docker + NDI_TEST_SOURCE env var
+
+# Rebuild the patched ndi-streamer C binary (after editing build/ndi_streamer/src/).
+cmake --build build/ndi_streamer/build --parallel
+
+# When you change ndi-streamer C source, regenerate the patch so dev-setup
+# can re-apply it on fresh clones.
+git -C build/ndi_streamer diff > scripts/ndi-streamer-no-audio.patch
+```
+
+There's no separate lint command; we lean on `pytest`. Tests run against
+pyenv's system Python because cyndilib's import (used by the PTZ module) is
+optional — the test environment doesn't have it installed and `bootstrap.py`
+catches that import error so the app degrades gracefully. **Don't** make
+cyndilib a hard import in `app.py` or `streamer.py`; the wrapping in
+`bootstrap.py` is load-bearing.
+
+## Architecture, the non-obvious parts
+
+### Three different processes interact
+
+1. **The Python FastAPI app** (uvicorn) — control plane only. Never touches
+   video frames in the streaming hot path.
+2. **`ndi-streamer`** (vendored C binary built from a patched clone of
+   alim-zanibekov/ndi_streamer) — one of these is spawned per live stream.
+   Receives NDI, encodes via libx264 + AAC, pushes RTMP. Spawned by
+   `streamer.py:Streamer.start()` with `asyncio.create_subprocess_exec`.
+3. **cyndilib's NDI receiver** (Python, in-process) — owned by
+   `PtzController`. Used for PTZ commands and for the live JPEG preview
+   pane. **This is a second NDI receiver attached to the same camera as
+   ndi-streamer** — NDI supports this but it's a non-obvious resource cost
+   on the camera.
+
+### The ndi-streamer C binary is patched, not forked
+
+`scripts/ndi-streamer-no-audio.patch` (filename is historical; it now contains
+all our C modifications) gets applied to a clean upstream clone by
+`scripts/dev-setup-mac.sh` and `scripts/install.sh`. The patch adds:
+- `--no_audio` flag (omits the audio stream entirely)
+- `--sacrament_image PATH` flag (loads an image at startup)
+- SIGUSR1 handler that toggles "show sacrament image instead of live NDI"
+- CBR + zerolatency x264 tuning (`nal-hrd=cbr`, `force-cfr=1`, `tune=zerolatency`)
+- 2-second GOP (`gop_size = 60`)
+
+If you edit `build/ndi_streamer/src/*.c`, you **must** regenerate the patch
+file (command above) so the change survives `git -C build/ndi_streamer pull`
+on the next dev-setup run.
+
+### Sacrament mode is a signal, not a subprocess swap
+
+This is critical and easy to get wrong. Earlier iterations spawned a separate
+ffmpeg subprocess to loop the sacrament image; YouTube saw each toggle as a
+new RTMP session and viewers got 30–60s of "no data."
+
+Current architecture: ndi-streamer is launched with `--sacrament_image` at
+start, then `Streamer.set_sacrament_mode()` sends `signal.SIGUSR1` to toggle.
+The C binary swaps which pixel buffer it feeds to libx264 (and zeros audio
+samples) **without restarting**. The RTMP session stays alive across toggles.
+
+If you find yourself wanting to "just restart the subprocess" to apply a
+config change, think hard — the seamless-transition property is the whole
+point of the current design.
+
+### Config is the source of truth for the UI
+
+`src/ndi_rmtp/app.py` reloads `config.toml` on **every** request via
+`get_config()`. Edits to the file take effect on the next API call, no
+restart needed (except changes that affect the running ndi-streamer's CLI
+args — those need a stop+start cycle).
+
+Two consequences:
+- Tests don't need to mock config aggressively; they can just write to a
+  `tmp_path / "config.toml"` fixture.
+- A linter that "normalises" the TOML (reformats `[[stream.wards]]` blocks
+  into inline tables, for example) won't break anything — `tomllib` reads
+  both shapes.
+
+### State machine lives in `state.py`, NOT in `streamer.py`
+
+`streamer.py` owns the subprocess and reads stderr; `state.py:StateMachine`
+owns the IDLE/STARTING/STREAMING/STOPPING/ERROR transitions with an explicit
+valid-transition table. When making changes to lifecycle behaviour, modify
+`state.py` first (with tests) and only then wire it through `streamer.py`.
+
+### Async lock-ordering rules
+
+`Streamer._lock` (`asyncio.Lock`) protects state transitions and the
+subprocess handle. The rule that's load-bearing for correctness:
+**never await on `proc.wait()` or `asyncio.sleep()` while holding the lock.**
+`stop()` snapshots `proc` inside the lock, releases the lock, then awaits.
+The auto-restart loop (`_retry_loop`) sleeps outside the lock between
+attempts. If you change this, expect deadlocks under concurrent toggle.
+
+### PTZ preview shares the PtzController's receiver
+
+There's only one cyndilib `Receiver` instance in the Python process; the
+preview snapshot pulls frames via `FrameSync` from the same connection used
+for PTZ commands. Don't open a third receiver unless you understand why two
+are already there.
+
+### Encoder settings are tuned for live, not quality
+
+x264 in `tune=zerolatency` + `nal-hrd=cbr` mode. `bframes=0`,
+`rc_lookahead=0`, `sliced-threads=1` — all latency-hostile features off.
+`gop_size=60` (2-second keyframe) is YouTube's recommended interval.
+CBR with `filler=1` keeps the actual bitrate pinned at target even on
+static content (sacrament image). Changing these blindly will regress
+live performance.
+
+Bitrate presets in `streamer.py:QUALITY_PRESETS` are sized for 640×360
+output (YouTube's 360p recommendation: 400–1000 kbps). If the source
+resolution changes, the presets need revisiting.
+
+## Config schema gotchas
+
+- `[auth] enabled = false` disables HTTP Basic Auth entirely — the
+  dependency factory uses `HTTPBasic(auto_error=False)` and bypasses the
+  check when `enabled` is false. Don't change the `auto_error` setting.
+- `[[stream.wards]]` is an array-of-tables but TOML linters often rewrite
+  it as `wards = [{ name = "..." }, ...]` — both parse to the same Python
+  shape, don't fight the linter.
+- `Ward.sacrament_image` can be a relative path (resolved from
+  `Path.cwd()`) or absolute. Empty string disables sacrament mode for
+  that ward.
+- `[ptz.presets]` slots are integers 0–99, matching the NDI preset index
+  on the camera. Stores are managed by the camera's own native preset
+  mechanism; we only recall.
+
+## Things that look broken but are intentional
+
+- `scripts/ndi-streamer-no-audio.patch` is a misleading filename. It now
+  contains all our C modifications. `TODO.md` flags the rename.
+- `config.toml` is in the repo (and in git history) **on purpose** — the
+  user's distribution model is to clone with config baked in. The repo is
+  private. If visibility ever changes, rotate keys first.
+- `~/Downloads/jordan_willows_sacrament_overlay.svg` is referenced
+  historically in some docs as the source of truth for the sacrament
+  template. The active SVGs in `sacrament/` are project-vendored.
+- The integration test (`tests/test_integration.py`) skips by default and
+  has never been run end-to-end. Don't trust that it actually passes
+  against a real source until someone has run it with
+  `NDI_TEST_SOURCE="..." uv run pytest -m integration`.
+
+## When something doesn't work
+
+YouTube playback issues are usually NOT our fault. Common culprits in order:
+1. Network bufferbloat (check `networkQuality` — Responsiveness should be
+   >300 RPM; under load on most home networks it's 50–100, which causes
+   spinners).
+2. YouTube's "Stream latency" setting in YouTube Studio. Normal mode
+   tolerates jitter; Ultra low does not.
+3. Camera audio not actually wired up (NDI delivers silent frames; we
+   faithfully forward them — verify with `scripts/check-ndi-audio.py` if
+   it exists, or the in-process numpy peak check we used during the
+   "no sound" diagnostic).
+
+`stop+start` the stream after any change to encoder settings, ward
+selection, or `Streamer.start()` args — the existing subprocess is locked
+to whatever CLI args it was spawned with.

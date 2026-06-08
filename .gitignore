@@ -13,8 +13,8 @@ uv.lock
 /bin/
 /build/
 
-# Local config — contains stream keys and admin password; never commit
-/config.toml
+# Quarantine file written when a malformed config is found at boot.
+# Never commit — may contain partial/corrupted secrets.
 /config.broken.toml
 
 # Dev artifacts

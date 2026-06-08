@@ -20,7 +20,7 @@ Environment=NDI_RMTP_CONFIG=/home/ndi-rmtp/.config/ndi-rmtp/config.toml
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/ndi-rmtp/.config
+ReadWritePaths=/home/ndi-rmtp/.config /home/ndi-rmtp/.cache
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

@@ -28,19 +28,41 @@ if ! command -v uv >/dev/null; then
 fi
 
 # --- NDI SDK ---
-NDI_HEADER=/usr/local/include/ndi/Processing.NDI.Lib.h
-if [[ ! -f "$NDI_HEADER" ]]; then
+# Two things have to happen:
+#   1. The aarch64 libndi.so* must be on the runtime linker path (we install
+#      a copy into /usr/local/lib/ + ldconfig).
+#   2. The full SDK tree (with include/ and lib/<arch>/) must live somewhere
+#      stable for ndi-streamer's cmake FindNDI to use. We standardise on
+#      /opt/ndi-sdk/, mirroring the SDK's own layout.
+NDI_SDK_ROOT="${NDI_SDK_DIR:-/opt/ndi-sdk}"
+if [[ ! -f "$NDI_SDK_ROOT/include/Processing.NDI.Lib.h" ]]; then
   cat <<EOF
 NDI SDK for Linux ARM64 not yet installed.
 
   1. Download "NDI SDK for Linux" from https://ndi.video/sdk/ (accept EULA)
-  2. Extract and run the installer (it'll prompt for EULA acceptance).
-  3. Copy the aarch64 library and headers:
-       sudo cp -r 'NDI SDK for Linux'/lib/aarch64-rpi4-linux-gnueabi/* /usr/local/lib/
-       sudo mkdir -p /usr/local/include/ndi
-       sudo cp 'NDI SDK for Linux'/include/*.h /usr/local/include/ndi/
+  2. Copy the tarball to the Pi (e.g., scp from your laptop to /tmp/) and run:
+       cd /tmp
+       yes Y | sh ./Install_NDI_SDK_v6_Linux.sh    # auto-accepts EULA
+       sudo mv "NDI SDK for Linux" /opt/ndi-sdk
+  3. Install the aarch64 runtime libs onto the system linker path:
+       sudo cp -P /opt/ndi-sdk/lib/aarch64-rpi4-linux-gnueabi/libndi.so* /usr/local/lib/
        sudo ldconfig
   4. Re-run this script.
+
+(Set NDI_SDK_DIR=<path> if the SDK lives elsewhere.)
+
+EOF
+  exit 1
+fi
+# Make sure runtime libs are findable too — install.sh users who only ran
+# step (2) above and forgot step (3) deserve a clean message rather than a
+# cryptic dlopen failure later.
+if ! ldconfig -p | grep -q '\blibndi\.so\b'; then
+  cat <<EOF
+NDI SDK headers found at $NDI_SDK_ROOT but libndi.so is not on the linker path.
+
+  sudo cp -P $NDI_SDK_ROOT/lib/aarch64-rpi4-linux-gnueabi/libndi.so* /usr/local/lib/
+  sudo ldconfig
 
 EOF
   exit 1
@@ -55,8 +77,23 @@ if [[ ! -d "$BUILD_DIR/.git" ]]; then
 else
   git -C "$BUILD_DIR" pull --ff-only
 fi
-# The CMakeLists checks NDI_SDK_DIR env var when on Linux.
-NDI_SDK_DIR="${NDI_SDK_DIR:-/usr/local}" cmake -B "$BUILD_DIR/build" -S "$BUILD_DIR" -DNDI_SDK_DIR="${NDI_SDK_DIR:-/usr/local}"
+# Apply local C patch (adds --no_audio, --sacrament_image, signal-driven
+# sacrament toggle, CBR/zerolatency tuning). Idempotent.
+PATCH="$PROJECT_ROOT/scripts/ndi-streamer-no-audio.patch"
+if [[ -f "$PATCH" ]]; then
+  if git -C "$BUILD_DIR" apply --check "$PATCH" 2>/dev/null; then
+    say "Applying patch: scripts/ndi-streamer-no-audio.patch"
+    git -C "$BUILD_DIR" apply "$PATCH"
+  elif git -C "$BUILD_DIR" apply --reverse --check "$PATCH" 2>/dev/null; then
+    : # already applied, nothing to do
+  else
+    say "WARNING: patch does not apply cleanly. Investigating upstream changes manually."
+    exit 1
+  fi
+fi
+# ndi-streamer's cmake/FindNDI.cmake expects the SDK at $NDI_SDK_DIR with
+# include/ and lib/<arch>/ subdirs (NOT the /usr/local/include/ndi layout).
+cmake -B "$BUILD_DIR/build" -S "$BUILD_DIR" -DNDI_SDK_DIR="$NDI_SDK_ROOT"
 cmake --build "$BUILD_DIR/build" --parallel
 install -m 0755 "$BUILD_DIR/build/ndi-streamer" /usr/local/bin/ndi-streamer
 

@@ -1,5 +1,5 @@
 diff --git a/src/ffmpeg_output.c b/src/ffmpeg_output.c
-index 0a91d62..817676d 100644
+index 0a91d62..7480f23 100644
 --- a/src/ffmpeg_output.c
 +++ b/src/ffmpeg_output.c
 @@ -107,7 +107,7 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
@@ -11,20 +11,29 @@ index 0a91d62..817676d 100644
  
      if (ctx->o_ctx->oformat->flags & AVFMT_GLOBALHEADER)
          c_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-@@ -119,6 +119,16 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
+@@ -119,6 +119,25 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
  
      if (strcmp(encoder_name, "libx264") == 0) {
          av_dict_set(&codec_options, "preset", "veryfast", 0);
++        // tune=zerolatency is the killer setting for live streaming. It
++        // disables B-frames, rc_lookahead, sync_lookahead, and enables
++        // sliced-threads — all the encoder/decoder behaviours that add
++        // hundreds of ms of latency by default. Without this, even a
++        // well-tuned CBR live stream feels sluggish on the viewer side.
++        av_dict_set(&codec_options, "tune", "zerolatency", 0);
 +        // Constant-bitrate output: x264 inserts filler NAL units to maintain
-+        // the target bitrate even when the content is static (e.g., the
-+        // sacrament overlay). YouTube warns when bitrate drops below the
-+        // recommended floor; this keeps it pinned.
++        // the target bitrate even when content is static (e.g., sacrament
++        // overlay). YouTube warns when bitrate drops below the recommended
++        // floor; this keeps it pinned and also stabilises the upload rate
++        // so YouTube's player buffer doesn't drain into a spinner.
 +        av_dict_set(&codec_options, "nal-hrd", "cbr", 0);
 +        av_dict_set(&codec_options, "x264-params", "force-cfr=1", 0);
-+        // CBR also requires matching min/max rate to target — set on the codec context.
 +        c_ctx->rc_min_rate = bitrate;
 +        c_ctx->rc_max_rate = bitrate;
-+        c_ctx->rc_buffer_size = (int)(bitrate * 2);  // 2-second buffer (YouTube guideline)
++        // Smaller buffer than the default 2-second window. With zerolatency
++        // we want the rate-controller to react quickly to content changes
++        // rather than smooth over a wide window.
++        c_ctx->rc_buffer_size = bitrate;  // 1-second buffer
      }
  
      if (codec->id == AV_CODEC_ID_H264) {

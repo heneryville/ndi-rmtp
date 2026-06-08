@@ -80,7 +80,10 @@ sacrament_image = "assets/sacrament/my_ward.svg"</pre>
 
     <section class="card" id="ptz-card" hidden>
       <h2>PTZ Camera <small id="ptz-source"></small></h2>
-      <img id="ptz-preview" class="ptz-preview" alt="Live camera preview" hidden>
+      <div class="ptz-preview-wrap">
+        <img id="ptz-preview" class="ptz-preview" alt="Live camera preview" hidden>
+        <div class="sacrament-overlay" aria-hidden="true">SACRAMENT MODE</div>
+      </div>
       <div id="presets-grid" class="presets-grid"></div>
       <details class="ptz-manual">
         <summary>Manual control</summary>

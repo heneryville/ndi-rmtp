@@ -76,9 +76,22 @@ body[data-state="STREAMING"][data-sacrament="true"] #exit-sacrament-btn { displa
 #ptz-card h2 small { color: #9aa0a6; font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
 .ptz-preview {
   display: block; width: 100%; max-height: 240px; object-fit: contain;
-  background: #000; border-radius: 4px; margin-bottom: 0.75rem;
+  background: #000; border-radius: 4px;
   border: 1px solid #2a2e36;
 }
+.ptz-preview-wrap { position: relative; margin-bottom: 0.75rem; }
+.sacrament-overlay {
+  display: none;
+  position: absolute; inset: 0;
+  align-items: center; justify-content: center;
+  background: rgba(124, 58, 237, 0.78);
+  color: #fff; font-weight: 700; letter-spacing: 0.15em;
+  font-size: clamp(1.4rem, 5vw, 2.5rem);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  pointer-events: none;
+}
+body[data-sacrament="true"] .sacrament-overlay { display: flex; }
 .presets-grid {
   display: grid; gap: 0.6rem; margin: 0.75rem 0 1rem;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

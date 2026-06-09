@@ -1,5 +1,5 @@
 diff --git a/src/ffmpeg_output.c b/src/ffmpeg_output.c
-index 0a91d62..7480f23 100644
+index 0a91d62..9c9b4f6 100644
 --- a/src/ffmpeg_output.c
 +++ b/src/ffmpeg_output.c
 @@ -107,7 +107,7 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
@@ -37,8 +37,103 @@ index 0a91d62..7480f23 100644
      }
  
      if (codec->id == AV_CODEC_ID_H264) {
+@@ -340,6 +359,18 @@ send_packets(const FFmpegOutputCtx *ctx, AVCodecContext *codec_context,
+                     pkt->dts, codec_context->time_base,
+                     ctx->o_ctx->streams[stream_index]->time_base);
+ 
++            // The AAC encoder emits a lookahead/priming packet with a
++            // small negative pts (~ -21 ms at 48 kHz). YouTube and several
++            // other RTMP ingest servers refuse to start a stream that
++            // begins with a negative-pts audio packet — sometimes silently
++            // (audio missing from the broadcast) and sometimes by parking
++            // the stream in "preparing" forever. Drop those first packets.
++            if (codec_context->codec_type == AVMEDIA_TYPE_AUDIO &&
++                pkt->pts < 0) {
++                av_packet_unref(pkt);
++                continue;
++            }
++
+             ret = av_interleaved_write_frame(ctx->o_ctx, pkt);
+             if (ret < 0) {
+                 av_error_fmt(ctx->error_str,
+diff --git a/src/frame_converter.c b/src/frame_converter.c
+index bd54194..0913f13 100644
+--- a/src/frame_converter.c
++++ b/src/frame_converter.c
+@@ -76,6 +76,7 @@ void
+ fc_reset(FrameConverterCtx *ctx)
+ {
+     ctx->frame_index = 0;
++    ctx->audio_pts_samples = 0;
+     ctx->start_ts = get_current_ts_usec();
+ }
+ 
+@@ -122,7 +123,7 @@ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+ 
+ AVFrame *
+ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+-                              NDIlib_audio_frame_v2_t *in_frame)
++                              NDIlib_audio_frame_v3_t *in_frame)
+ {
+     int ret;
+     int nb_samples = codec_ctx->frame_size;
+@@ -144,8 +145,11 @@ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+     av_frame_get_buffer(out_frame, 0);
+ 
+     if (!in_frame) { // flush
+-        out_frame->pkt_dts = get_current_ts_usec() - ctx->start_ts;
+-        out_frame->pts = swr_next_pts(ctx->swr_context, INT64_MIN);
++        int64_t pts_increment_us =
++                (int64_t)nb_samples * 1000000 / codec_ctx->sample_rate;
++        out_frame->pkt_dts = ctx->audio_pts_samples;
++        out_frame->pts = ctx->audio_pts_samples;
++        ctx->audio_pts_samples += pts_increment_us;
+ 
+         ret = swr_convert(ctx->swr_context, out_frame->data,
+                           out_frame->nb_samples, NULL, 0);
+@@ -196,8 +200,14 @@ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+         return NULL;
+     }
+ 
+-    out_frame->pkt_dts = get_current_ts_usec() - ctx->start_ts;
+-    out_frame->pts = swr_next_pts(ctx->swr_context, INT64_MIN);
++    // Audio codec_ctx->time_base is set to AV_TIME_BASE_Q ({1, 1000000})
++    // by the codec setup, not {1, sample_rate}. So pts is in microseconds:
++    // per AAC frame, pts advances by nb_samples * 1e6 / sample_rate.
++    int64_t pts_increment_us =
++            (int64_t)nb_samples * 1000000 / codec_ctx->sample_rate;
++    out_frame->pkt_dts = ctx->audio_pts_samples;
++    out_frame->pts = ctx->audio_pts_samples;
++    ctx->audio_pts_samples += pts_increment_us;
+ 
+     ret = swr_convert(ctx->swr_context, out_frame->data, out_frame->nb_samples,
+                       NULL, 0);
+diff --git a/src/frame_converter.h b/src/frame_converter.h
+index 5d5a99c..d36c661 100644
+--- a/src/frame_converter.h
++++ b/src/frame_converter.h
+@@ -21,6 +21,11 @@ typedef struct FrameConverterCtx {
+     int64_t frame_index;
+     int64_t start_ts;
+ 
++    // Running sample count for audio pts. Audio codec_ctx->time_base is
++    // {1, sample_rate}, so pts = total samples emitted so far. Reset on
++    // fc_reset() to keep audio aligned with a fresh RTMP session.
++    int64_t audio_pts_samples;
++
+     char *error_str;
+ } FrameConverterCtx;
+ 
+@@ -39,5 +44,5 @@ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+ 
+ AVFrame *
+ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+-                              NDIlib_audio_frame_v2_t *in_frame);
++                              NDIlib_audio_frame_v3_t *in_frame);
+ #endif
+\ No newline at end of file
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..58fecf8 100644
+index 399a4eb..e3dbe0a 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
 @@ -5,6 +5,13 @@
@@ -177,7 +272,20 @@ index 399a4eb..58fecf8 100644
      char ffmpeg_output_format[30];
      if (strcmp(opts.output_format, "rtmp") == 0) {
          snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
-@@ -129,8 +233,10 @@ main(int argc, char **argv)
+@@ -107,7 +211,11 @@ main(int argc, char **argv)
+         }
+ 
+         NDIlib_video_frame_v2_t v_frame;
+-        NDIlib_audio_frame_v2_t a_frame;
++        // Use v3 audio frames: NDIlib_recv_capture_v2 silently returns
++        // ~ -47 dBFS noise (no actual decode) when receiving NDI HX/HX3
++        // audio on libndi 6.3.2 / Linux aarch64. The v3 capture path
++        // correctly decodes the same stream. See CLAUDE.md.
++        NDIlib_audio_frame_v3_t a_frame;
+ 
+         int width = 0, height = 0;
+         AVRational frame_rate = {};
+@@ -129,8 +237,10 @@ main(int argc, char **argv)
  
          ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, width, height,
                                    frame_rate, opts.video_bitrate);
@@ -190,7 +298,16 @@ index 399a4eb..58fecf8 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -148,8 +254,35 @@ main(int argc, char **argv)
+@@ -140,7 +250,7 @@ main(int argc, char **argv)
+         fc_reset(fc_ctx);
+ 
+         while (eh_alive()) {
+-            NDIlib_frame_type_e res = NDIlib_recv_capture_v2(
++            NDIlib_frame_type_e res = NDIlib_recv_capture_v3(
+                     recv, &v_frame, &a_frame, NULL, NDI_RECV_TIMEOUT);
+ 
+             if (res == NDIlib_frame_type_video) {
+@@ -148,8 +258,35 @@ main(int argc, char **argv)
                      break;
                  }
  
@@ -228,7 +345,7 @@ index 399a4eb..58fecf8 100644
  
                  NDIlib_recv_free_video_v2(recv, &v_frame);
  
-@@ -158,7 +291,15 @@ main(int argc, char **argv)
+@@ -158,18 +295,27 @@ main(int argc, char **argv)
                      break;
                  }
              }
@@ -245,7 +362,20 @@ index 399a4eb..58fecf8 100644
                  AVFrame *frame = fc_ndi_audio_frame_to_avframe(
                          fc_ctx, fa_ctx->audio_codec_ctx, &a_frame);
  
-@@ -189,6 +330,8 @@ main(int argc, char **argv)
+                 if (!frame) {
++                    NDIlib_recv_free_audio_v3(recv, &a_frame);
+                     continue;
+                 }
+                 if (ffmpeg_output_send_audio_frame(fa_ctx, frame) < 0) {
+                     printf("[ERROR] %s", fa_ctx->error_str);
+                     break;
+                 }
+-                NDIlib_recv_free_audio_v2(recv, &a_frame);
++                NDIlib_recv_free_audio_v3(recv, &a_frame);
+ 
+                 while ((frame = fc_ndi_audio_frame_to_avframe(
+                                 fc_ctx, fa_ctx->audio_codec_ctx, NULL))
+@@ -189,6 +335,8 @@ main(int argc, char **argv)
  
      free_frame_converter_ctx(&fc_ctx);
  
@@ -254,7 +384,7 @@ index 399a4eb..58fecf8 100644
      NDIlib_recv_destroy(recv);
  
      NDIlib_destroy();
-@@ -279,6 +422,8 @@ const ProgramOption options[] = {
+@@ -279,6 +427,8 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
@@ -263,7 +393,7 @@ index 399a4eb..58fecf8 100644
      { NULL, NULL, 0 },
  };
  
-@@ -352,6 +497,12 @@ read_params(int argc, char **argv)
+@@ -352,6 +502,12 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }

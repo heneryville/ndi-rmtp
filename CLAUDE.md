@@ -147,6 +147,44 @@ debugging "Video decoder not found", check:
 Remove the jellyfin-ffmpeg7 workaround when Pi OS Trixie is the install
 target — Trixie has FFmpeg 7 in its base repo.
 
+### HX/HX3 audio: NDIlib_recv_capture_v2 is broken on Linux aarch64
+
+libndi 6.3.2's `NDIlib_recv_capture_v2` silently returns ~ -47 dBFS noise
+(no actual decode) when receiving NDI HX or HX3 audio on Linux aarch64,
+even when the same receiver delivers valid HX3 video. `NDIlib_recv_capture_v3`
+with `NDIlib_audio_frame_v3_t` decodes the same stream correctly to FLTP
+@ 48 kHz with real signal. Our patch to ndi-streamer (`scripts/ndi-streamer-no-audio.patch`)
+switches the audio path to v3; the symptom on a v2 build is "video works,
+YouTube has no audible audio."
+
+### Audio codec time_base is AV_TIME_BASE_Q, not {1, sample_rate}
+
+`ffmpeg_output_setup_audio` configures `audio_codec_ctx->time_base` as
+`{1, 1000000}` (microseconds), the same as video. The upstream ndi-streamer
+set the AVFrame's pts via `swr_next_pts(...)` which returns values in
+swr's own internal time base (`1/(in_sr * out_sr)` ≈ 1/2.3 GHz). Those
+numbers, interpreted in microseconds by the encoder, produced timestamps
+roughly 50,000× too large. The FLV/RTMP muxer happily accepted them — the
+ingest then either silently drops audio (YouTube's old behavior) or parks
+the broadcast in "Preparing stream" indefinitely (newer behavior).
+
+The fix: track a `audio_pts_samples` counter in microseconds —
+`pts += nb_samples * 1e6 / sample_rate` per AAC frame — and write that
+into the AVFrame pts. If you ever change `audio_codec_ctx->time_base`
+in `ffmpeg_output_setup_audio`, you must also change the increment unit
+in `fc_ndi_audio_frame_to_avframe` to match.
+
+### AAC encoder lookahead emits a negative-pts priming packet
+
+LAVF's native AAC encoder emits its first packet with a small negative pts
+(~ -21 ms at 48 kHz with frame_size=1024) representing the encoder's
+priming/lookahead samples. YouTube's RTMP ingest refuses to start a stream
+whose first audio packet has a negative timestamp — the broadcast sits in
+"Preparing stream" until either you stop, or the negative-pts packet
+times out and gets discarded. Our patch drops audio packets with pts < 0
+inside `send_packets`. The discarded samples are silent priming; nothing
+audible is lost.
+
 ### PTZ preview shares the PtzController's receiver
 
 There's only one cyndilib `Receiver` instance in the Python process; the

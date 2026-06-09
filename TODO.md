@@ -16,6 +16,13 @@ production. Items higher in each section are higher priority.
 - [ ] **Verify cyndilib aarch64 wheel installs cleanly on Pi OS Bookworm/
       Trixie.** It has aarch64 wheels on PyPI but we haven't actually
       pulled them on the Pi yet.
+- [ ] **Drop the `jellyfin-ffmpeg7` workaround once Pi OS Trixie is the
+      install target.** Bookworm ships FFmpeg 5 (`libavcodec.so.59`) but
+      libndi 6.3.2 dlopens FFmpeg 7's `libavcodec.so.61` for HX/HX3
+      decode. The installer currently grabs jellyfin-ffmpeg7's prefixed
+      build to fill that gap; Trixie's stock `libavcodec61` would replace
+      it. See CLAUDE.md "libndi needs FFmpeg 7 at runtime for HX / HX3
+      decode" for the full story.
 - [ ] **systemd unit `ReadWritePaths` audit.** It currently grants write
       to `/home/ndi-rmtp/.config` only, which is correct for the env-var
       config path. But the running app also writes the sacrament PNG to

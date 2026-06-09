@@ -120,6 +120,33 @@ subprocess handle. The rule that's load-bearing for correctness:
 The auto-restart loop (`_retry_loop`) sleeps outside the lock between
 attempts. If you change this, expect deadlocks under concurrent toggle.
 
+### libndi needs FFmpeg 7 at runtime for HX / HX3 decode
+
+`libndi.so.6` does not ship a built-in H.264/H.265 decoder. When the
+incoming NDI stream is **NDI HX** (H.264) or **NDI HX3** (H.265) — which
+is what every consumer PTZ camera in this price range produces — libndi
+dlopens `libavcodec.so.61` / `libavutil.so.59` at first-frame time. Those
+are **FFmpeg 7** SONAMEs.
+
+Pi OS Bookworm ships **FFmpeg 5** (`libavcodec.so.59`). Mac Homebrew is
+on FFmpeg 7 by default, so this asymmetry only shows up on the Pi. When
+the FFmpeg-7 libs are missing, libndi silently falls back to producing a
+1920×1080 UYVY frame containing a static "Video decoder not found" splash.
+Every consumer of that stream (the live encoder *and* the preview pane)
+faithfully forwards the splash to its output. The streamer reaches
+`STREAMING` state because frames *are* arriving — they're just placeholders.
+
+The Pi installer bridges this by installing `jellyfin-ffmpeg7` into its own
+prefix (`/usr/lib/jellyfin-ffmpeg/`) and adding the lib dir to ldconfig.
+The system FFmpeg 5 stays in place — different SONAMEs, no conflict. When
+debugging "Video decoder not found", check:
+
+1. `ldconfig -p | grep libavcodec.so.61` — must resolve to the jellyfin-ffmpeg path
+2. `LD_DEBUG=files <any libndi recv tool> 2>&1 | grep avcodec` — must show `libavcodec.so.61 ... generating link map` (not just `dynamically loaded by` with no follow-up)
+
+Remove the jellyfin-ffmpeg7 workaround when Pi OS Trixie is the install
+target — Trixie has FFmpeg 7 in its base repo.
+
 ### PTZ preview shares the PtzController's receiver
 
 There's only one cyndilib `Receiver` instance in the Python process; the

@@ -133,12 +133,12 @@ index 5d5a99c..d36c661 100644
  #endif
 \ No newline at end of file
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..e3dbe0a 100644
+index 399a4eb..1acf0e9 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
 @@ -5,6 +5,14 @@
  // https://opensource.org/licenses/MIT.
-
+ 
  #include <stdio.h>
 +#include <signal.h>
 +#include <string.h>
@@ -148,10 +148,10 @@ index 399a4eb..e3dbe0a 100644
 +#include <libavformat/avformat.h>
 +#include <libswscale/swscale.h>
 +#include <libavutil/imgutils.h>
-
+ 
  #include <Processing.NDI.Lib.h>
  
-@@ -22,8 +29,102 @@ typedef struct AppOptions {
+@@ -22,8 +30,115 @@ typedef struct AppOptions {
      char audio_encoder[40];
      int video_bitrate;
      int audio_bitrate;
@@ -166,11 +166,24 @@ index 399a4eb..e3dbe0a 100644
 +static volatile sig_atomic_t sacrament_active = 0;
 +static AVFrame *sacrament_frame = NULL;  // pre-scaled to encoder dims, YUV420P
 +
++// Audio mute: when active, outgoing audio samples are zeroed but the audio
++// stream itself stays alive (FLV/RTMP timestamps keep advancing). Toggled by
++// SIGUSR2. Same motivation as sacrament: avoid the YouTube reconnect gap
++// that ripping and re-establishing the audio stream would cause.
++static volatile sig_atomic_t audio_muted = 0;
++
 +static void
 +on_sigusr1(int signum)
 +{
 +    (void)signum;
 +    sacrament_active = !sacrament_active;
++}
++
++static void
++on_sigusr2(int signum)
++{
++    (void)signum;
++    audio_muted = !audio_muted;
 +}
 +
 +// Load `path` (any image format ffmpeg can decode), scale to target dims
@@ -254,7 +267,7 @@ index 399a4eb..e3dbe0a 100644
  AppOptions
  read_params(int argc, char **argv);
  
-@@ -39,7 +140,7 @@ main(int argc, char **argv)
+@@ -39,7 +154,7 @@ main(int argc, char **argv)
          printf("[ERROR] codec '%s' not found\n", opts.video_encoder);
          return 1;
      }
@@ -263,17 +276,20 @@ index 399a4eb..e3dbe0a 100644
          printf("[ERROR] codec '%s' not found\n", opts.audio_encoder);
          return 1;
      }
-@@ -71,6 +172,9 @@ main(int argc, char **argv)
+@@ -71,6 +186,12 @@ main(int argc, char **argv)
          return 1;
      }
  
-+    // SIGUSR1 toggles sacrament mode without disturbing the RTMP session.
++    // SIGUSR1 toggles sacrament mode, SIGUSR2 toggles audio mute. Both
++    // operate on the live encoder/muxer state — the RTMP session is never
++    // restarted, so YouTube never sees a reconnect gap.
 +    signal(SIGUSR1, on_sigusr1);
++    signal(SIGUSR2, on_sigusr2);
 +
      char ffmpeg_output_format[30];
      if (strcmp(opts.output_format, "rtmp") == 0) {
          snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
-@@ -107,7 +211,11 @@ main(int argc, char **argv)
+@@ -107,7 +228,11 @@ main(int argc, char **argv)
          }
  
          NDIlib_video_frame_v2_t v_frame;
@@ -286,7 +302,7 @@ index 399a4eb..e3dbe0a 100644
  
          int width = 0, height = 0;
          AVRational frame_rate = {};
-@@ -129,8 +237,10 @@ main(int argc, char **argv)
+@@ -129,8 +254,10 @@ main(int argc, char **argv)
  
          ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, width, height,
                                    frame_rate, opts.video_bitrate);
@@ -299,7 +315,7 @@ index 399a4eb..e3dbe0a 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -140,7 +250,7 @@ main(int argc, char **argv)
+@@ -140,7 +267,7 @@ main(int argc, char **argv)
          fc_reset(fc_ctx);
  
          while (eh_alive()) {
@@ -308,7 +324,7 @@ index 399a4eb..e3dbe0a 100644
                      recv, &v_frame, &a_frame, NULL, NDI_RECV_TIMEOUT);
  
              if (res == NDIlib_frame_type_video) {
-@@ -148,8 +258,35 @@ main(int argc, char **argv)
+@@ -148,8 +275,35 @@ main(int argc, char **argv)
                      break;
                  }
  
@@ -346,15 +362,16 @@ index 399a4eb..e3dbe0a 100644
  
                  NDIlib_recv_free_video_v2(recv, &v_frame);
  
-@@ -158,18 +295,27 @@ main(int argc, char **argv)
+@@ -158,18 +312,28 @@ main(int argc, char **argv)
                      break;
                  }
              }
 -            else if (res == NDIlib_frame_type_audio) {
 +            else if (res == NDIlib_frame_type_audio && !opts.no_audio) {
-+                // During sacrament, send silence (preserves stream shape, no
-+                // muxer hiccup) instead of skipping audio frames entirely.
-+                if (sacrament_active && a_frame.p_data && a_frame.no_samples > 0) {
++                // During sacrament OR audio mute, send silence (preserves
++                // stream shape, no muxer hiccup) instead of skipping audio
++                // frames entirely.
++                if ((sacrament_active || audio_muted) && a_frame.p_data && a_frame.no_samples > 0) {
 +                    memset(a_frame.p_data, 0,
 +                           (size_t)a_frame.no_samples
 +                                   * (size_t)a_frame.no_channels
@@ -376,7 +393,7 @@ index 399a4eb..e3dbe0a 100644
  
                  while ((frame = fc_ndi_audio_frame_to_avframe(
                                  fc_ctx, fa_ctx->audio_codec_ctx, NULL))
-@@ -189,6 +335,8 @@ main(int argc, char **argv)
+@@ -189,6 +353,8 @@ main(int argc, char **argv)
  
      free_frame_converter_ctx(&fc_ctx);
  
@@ -385,7 +402,7 @@ index 399a4eb..e3dbe0a 100644
      NDIlib_recv_destroy(recv);
  
      NDIlib_destroy();
-@@ -279,6 +427,8 @@ const ProgramOption options[] = {
+@@ -279,6 +445,8 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
@@ -394,7 +411,7 @@ index 399a4eb..e3dbe0a 100644
      { NULL, NULL, 0 },
  };
  
-@@ -352,6 +502,12 @@ read_params(int argc, char **argv)
+@@ -352,6 +520,12 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }

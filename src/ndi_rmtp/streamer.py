@@ -176,18 +176,30 @@ class Streamer:
         return s
 
     async def set_muted(self, muted: bool) -> None:
-        """Toggle audio. If currently streaming, restart the subprocess so the
-        change takes effect. YouTube may show a brief 'reconnecting' blip."""
+        """Toggle audio mute in the running ndi-streamer subprocess.
+
+        Sends SIGUSR2, which the patched ndi-streamer interprets as an
+        audio-mute toggle (zeros outgoing samples but keeps the audio
+        stream alive). The subprocess and its RTMP session stay alive
+        across the toggle, so YouTube sees no reconnect gap.
+
+        Idempotent: if `muted` already matches our recorded state, no
+        signal is sent (avoids desync on accidental double-clicks).
+        """
         if muted == self._muted:
             return
-        self._muted = muted
-        # If we're not actively streaming, the new flag just gets picked up on
-        # the next start. Otherwise restart in place.
-        if self._sm.state not in (State.STARTING, State.STREAMING) or self._last_start_params is None:
+        if self._proc is None or self._proc.returncode is not None:
+            # Not streaming — just remember the desired state. (UI only
+            # exposes mute while STREAMING, so this branch is defensive.)
+            self._muted = muted
             return
-        source, key, quality = self._last_start_params
-        await self.stop()
-        await self.start(source, key, quality)
+        try:
+            self._proc.send_signal(signal.SIGUSR2)
+        except ProcessLookupError:
+            # Subprocess just exited — fall back to deferred state.
+            self._muted = muted
+            return
+        self._muted = muted
 
     async def set_sacrament_mode(self, enabled: bool) -> None:
         """Toggle sacrament mode in the running ndi-streamer subprocess.
@@ -257,13 +269,14 @@ class Streamer:
                 argv = build_args(
                     self._binary, source, cfg.stream.rtmp_url,
                     stream_key, quality,
-                    muted=self._muted,
+                    muted=False,  # signal-driven; SIGUSR2 toggles at runtime
                     sacrament_image=self._last_sacrament_png,
                 )
                 env_overrides = {}
-            # New subprocess starts with sacrament_active = 0 (in C). Reset
-            # our flag so the UI matches.
+            # New subprocess starts with sacrament_active = audio_muted = 0
+            # in C. Reset our flags so the UI matches.
             self._sacrament_mode = False
+            self._muted = False
             env = os.environ.copy()
             env.update(env_overrides)
 

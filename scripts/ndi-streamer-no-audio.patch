@@ -133,7 +133,7 @@ index 5d5a99c..d36c661 100644
  #endif
 \ No newline at end of file
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..1acf0e9 100644
+index 399a4eb..52c6e30 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
 @@ -5,6 +5,14 @@
@@ -151,12 +151,18 @@ index 399a4eb..1acf0e9 100644
  
  #include <Processing.NDI.Lib.h>
  
-@@ -22,8 +30,115 @@ typedef struct AppOptions {
+@@ -22,8 +30,121 @@ typedef struct AppOptions {
      char audio_encoder[40];
      int video_bitrate;
      int audio_bitrate;
 +    int no_audio;
 +    char sacrament_image[512];  // path to an image (PNG/JPG); enables --sacrament toggle
++    // Resolution knob. bandwidth = "lowest" (proxy stream, ~360p) or
++    // "highest" (camera native). target_w/h = encoder output dims; 0 means
++    // use whatever the camera sends. sws_scale handles any resize for free.
++    char bandwidth[16];
++    int target_width;
++    int target_height;
  } AppOptions;
  
 +// Sacrament mode: when active, the video frame is replaced with the loaded
@@ -267,7 +273,7 @@ index 399a4eb..1acf0e9 100644
  AppOptions
  read_params(int argc, char **argv);
  
-@@ -39,7 +154,7 @@ main(int argc, char **argv)
+@@ -39,7 +160,7 @@ main(int argc, char **argv)
          printf("[ERROR] codec '%s' not found\n", opts.video_encoder);
          return 1;
      }
@@ -276,7 +282,23 @@ index 399a4eb..1acf0e9 100644
          printf("[ERROR] codec '%s' not found\n", opts.audio_encoder);
          return 1;
      }
-@@ -71,6 +186,12 @@ main(int argc, char **argv)
+@@ -58,10 +179,14 @@ main(int argc, char **argv)
+         source.p_url_address = opts.ndi_input_addr;
+     }
+ 
++    NDIlib_recv_bandwidth_e bw =
++            (strcmp(opts.bandwidth, "highest") == 0)
++                    ? NDIlib_recv_bandwidth_highest
++                    : NDIlib_recv_bandwidth_lowest;
+     NDIlib_recv_create_v3_t recv_create_desc = {
+         .source_to_connect_to = source,
+         .p_ndi_recv_name = "ndi-streamer",
+-        .bandwidth = NDIlib_recv_bandwidth_lowest,
++        .bandwidth = bw,
+     };
+ 
+     NDIlib_recv_instance_t recv = NDIlib_recv_create_v3(&recv_create_desc);
+@@ -71,6 +196,12 @@ main(int argc, char **argv)
          return 1;
      }
  
@@ -289,7 +311,7 @@ index 399a4eb..1acf0e9 100644
      char ffmpeg_output_format[30];
      if (strcmp(opts.output_format, "rtmp") == 0) {
          snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
-@@ -107,7 +228,11 @@ main(int argc, char **argv)
+@@ -107,7 +238,11 @@ main(int argc, char **argv)
          }
  
          NDIlib_video_frame_v2_t v_frame;
@@ -302,9 +324,17 @@ index 399a4eb..1acf0e9 100644
  
          int width = 0, height = 0;
          AVRational frame_rate = {};
-@@ -129,8 +254,10 @@ main(int argc, char **argv)
+@@ -127,10 +262,17 @@ main(int argc, char **argv)
  
-         ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, width, height,
+         ffmpeg_output_close_codecs(fa_ctx);
+ 
+-        ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, width, height,
++        // Encoder runs at target dims when set; sws_scale (inside frame
++        // converter) resizes the NDI input to fit. With target=0 (default),
++        // encoder dims track the source.
++        int enc_w = opts.target_width  > 0 ? opts.target_width  : width;
++        int enc_h = opts.target_height > 0 ? opts.target_height : height;
++        ffmpeg_output_setup_video(fa_ctx, opts.video_encoder, enc_w, enc_h,
                                    frame_rate, opts.video_bitrate);
 -        ffmpeg_output_setup_audio(fa_ctx, opts.audio_encoder,
 -                                  opts.audio_bitrate);
@@ -315,7 +345,7 @@ index 399a4eb..1acf0e9 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -140,7 +267,7 @@ main(int argc, char **argv)
+@@ -140,16 +282,47 @@ main(int argc, char **argv)
          fc_reset(fc_ctx);
  
          while (eh_alive()) {
@@ -324,7 +354,12 @@ index 399a4eb..1acf0e9 100644
                      recv, &v_frame, &a_frame, NULL, NDI_RECV_TIMEOUT);
  
              if (res == NDIlib_frame_type_video) {
-@@ -148,8 +275,35 @@ main(int argc, char **argv)
+-                if (width != v_frame.xres || height != v_frame.yres) {
++                // Source-dim drift is only fatal when the encoder tracks the
++                // source. With explicit target dims, sws_scale absorbs any
++                // input-dim variation, so the encoder/muxer stay stable.
++                if (opts.target_width == 0 &&
++                    (width != v_frame.xres || height != v_frame.yres)) {
                      break;
                  }
  
@@ -362,7 +397,7 @@ index 399a4eb..1acf0e9 100644
  
                  NDIlib_recv_free_video_v2(recv, &v_frame);
  
-@@ -158,18 +312,28 @@ main(int argc, char **argv)
+@@ -158,18 +331,28 @@ main(int argc, char **argv)
                      break;
                  }
              }
@@ -393,7 +428,7 @@ index 399a4eb..1acf0e9 100644
  
                  while ((frame = fc_ndi_audio_frame_to_avframe(
                                  fc_ctx, fa_ctx->audio_codec_ctx, NULL))
-@@ -189,6 +353,8 @@ main(int argc, char **argv)
+@@ -189,6 +372,8 @@ main(int argc, char **argv)
  
      free_frame_converter_ctx(&fc_ctx);
  
@@ -402,16 +437,27 @@ index 399a4eb..1acf0e9 100644
      NDIlib_recv_destroy(recv);
  
      NDIlib_destroy();
-@@ -279,6 +445,8 @@ const ProgramOption options[] = {
+@@ -279,6 +464,11 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
 +    { "no_audio", "do not encode or output audio (video-only stream)", 1 },
 +    { "sacrament_image", "path to an image (PNG/JPG) used while SIGUSR1 is toggled on", 0 },
++    { "bandwidth", "ndi recv bandwidth: 'lowest' (proxy ~360p) or 'highest' (full)", 0 },
++    { "target_width",  "encoder output width (0 = native)",  0 },
++    { "target_height", "encoder output height (0 = native)", 0 },
      { NULL, NULL, 0 },
  };
  
-@@ -352,6 +520,12 @@ read_params(int argc, char **argv)
+@@ -298,6 +488,7 @@ read_params(int argc, char **argv)
+     sprintf(res.output, "rtsp://127.0.0.1:8554/live.sdp");
+     res.video_bitrate = 30000000;
+     res.audio_bitrate = 320000;
++    sprintf(res.bandwidth, "lowest");
+ 
+     for (; (c = op_parse(argc, argv, op_ctx, &opt)) != -1;) {
+         switch (c) {
+@@ -352,6 +543,33 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }
@@ -420,6 +466,27 @@ index 399a4eb..1acf0e9 100644
 +            }
 +            else if (strcmp(opt->name, "sacrament_image") == 0) {
 +                snprintf(res.sacrament_image, sizeof res.sacrament_image, "%s", optarg);
++            }
++            else if (strcmp(opt->name, "bandwidth") == 0) {
++                snprintf(res.bandwidth, sizeof res.bandwidth, "%s", optarg);
++            }
++            else if (strcmp(opt->name, "target_width") == 0) {
++                long si = strtol(optarg, &end, 10);
++                if (end == optarg) {
++                    printf("couldn't convert \"%s\" to number\n", optarg);
++                    op_free(&op_ctx);
++                    exit(0);
++                }
++                res.target_width = (int)si;
++            }
++            else if (strcmp(opt->name, "target_height") == 0) {
++                long si = strtol(optarg, &end, 10);
++                if (end == optarg) {
++                    printf("couldn't convert \"%s\" to number\n", optarg);
++                    op_free(&op_ctx);
++                    exit(0);
++                }
++                res.target_height = (int)si;
 +            }
              break;
          }

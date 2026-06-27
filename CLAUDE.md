@@ -75,16 +75,23 @@ If you edit `build/ndi_streamer/src/*.c`, you **must** regenerate the patch
 file (command above) so the change survives `git -C build/ndi_streamer pull`
 on the next dev-setup run.
 
-### Sacrament mode is a signal, not a subprocess swap
+### Runtime toggles use signals, not subprocess swaps
 
 This is critical and easy to get wrong. Earlier iterations spawned a separate
-ffmpeg subprocess to loop the sacrament image; YouTube saw each toggle as a
-new RTMP session and viewers got 30–60s of "no data."
+ffmpeg subprocess to apply sacrament or mute changes; YouTube saw each
+toggle as a new RTMP session and viewers got 30–60s of "no data."
 
-Current architecture: ndi-streamer is launched with `--sacrament_image` at
-start, then `Streamer.set_sacrament_mode()` sends `signal.SIGUSR1` to toggle.
-The C binary swaps which pixel buffer it feeds to libx264 (and zeros audio
-samples) **without restarting**. The RTMP session stays alive across toggles.
+Two signal-driven toggles share the pattern:
+
+- **Sacrament mode** (`SIGUSR1`): `Streamer.set_sacrament_mode()` flips
+  `sacrament_active` in the C binary, which swaps the pixel buffer fed to
+  libx264 (and zeros audio samples). The RTMP session stays alive.
+- **Audio mute** (`SIGUSR2`): `Streamer.set_muted()` flips `audio_muted`,
+  which zeros outgoing audio samples but leaves the FLV audio stream
+  itself running. The RTMP session stays alive.
+
+Both Python flags reset to False on every fresh subprocess spawn to stay in
+sync with C's `static volatile sig_atomic_t ... = 0` initialisers.
 
 If you find yourself wanting to "just restart the subprocess" to apply a
 config change, think hard — the seamless-transition property is the whole
@@ -201,9 +208,35 @@ CBR with `filler=1` keeps the actual bitrate pinned at target even on
 static content (sacrament image). Changing these blindly will regress
 live performance.
 
-Bitrate presets in `streamer.py:QUALITY_PRESETS` are sized for 640×360
-output (YouTube's 360p recommendation: 400–1000 kbps). If the source
-resolution changes, the presets need revisiting.
+Bitrate presets in `streamer.py:QUALITY_PRESETS` are a 2D dict keyed by
+`(resolution, quality)`. Each preset lands inside YouTube's recommended
+range for that resolution — sending too HIGH a bitrate triggers YouTube's
+"bitrate too high" warning AND can cause them to transcode the stream
+down to a lower quality tier on playback.
+
+### Resolution config knob: bandwidth + target dims
+
+`[stream] resolution` in `config.toml` accepts `"360p30"`, `"720p30"`, or
+`"1080p30"` (default `1080p30`). The Python side maps these to a
+`(width, height, bandwidth)` triple via `RESOLUTION_DIMS` and passes them
+to ndi-streamer as `--target_width`, `--target_height`, `--bandwidth`.
+
+Two non-obvious things to know:
+
+- `bandwidth=lowest` is the camera's **proxy stream** (typically ~360p,
+  H.264, much smaller payload), not just a quality preference. `highest`
+  is the camera's native feed. NDI HX/HX3 cameras decide independently
+  which streams to publish at which bandwidths.
+- 720p mode is the only resolution that *downscales* in our pipeline:
+  it asks the camera for the full-bandwidth feed (`highest`) and lets
+  `sws_scale` inside ndi-streamer shrink the result to 1280×720 before
+  encoding. 360p and 1080p both ask the camera for natively-sized
+  frames and don't resize at all.
+
+The first-frame dimensions check in the encoder loop (originally a
+sanity bail-out when the input feed's resolution drifts) is gated on
+`opts.target_width == 0` — when we're explicitly resizing, sws_scale
+absorbs input-dim variation and the encoder/muxer stay stable.
 
 ## Config schema gotchas
 

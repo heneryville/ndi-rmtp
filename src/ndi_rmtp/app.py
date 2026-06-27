@@ -114,6 +114,7 @@ def build_app(
                 source=connect_target,
                 stream_key=active.key,
                 quality=quality,
+                resolution=cfg.stream.resolution,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))

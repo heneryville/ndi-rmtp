@@ -38,16 +38,41 @@ STARTING_TIMEOUT_S = 10.0
 STOP_GRACE_S = 5.0
 LOG_BUFFER_LINES = 200
 
-# Bitrates are in bits per second (ndi-streamer expects integers, no "k" suffix).
-# Sized for 640x360 (our standard output resolution); YouTube's recommendation
-# range for 360p @ 30fps is 400–1000 kbps. If we later support higher
-# resolutions, these will need to go up — see YouTube's recommended bitrate
-# table by resolution.
-QUALITY_PRESETS: dict[str, dict[str, int]] = {
-    "low":    {"v_bitrate_bps":   600_000, "a_bitrate_bps": 128_000},
-    "medium": {"v_bitrate_bps": 1_200_000, "a_bitrate_bps": 128_000},
-    "high":   {"v_bitrate_bps": 2_000_000, "a_bitrate_bps": 192_000},
+# Bitrates are in bits per second (ndi-streamer expects integers, no "k"
+# suffix). Sized to land inside YouTube's recommended range for each
+# (resolution, quality) pair — sending a higher bitrate than YouTube wants
+# for a given resolution triggers their "bitrate too high" warning AND
+# can cause them to transcode down to a lower quality tier on playback.
+QUALITY_PRESETS: dict[str, dict[str, dict[str, int]]] = {
+    "360p30": {
+        "low":    {"v_bitrate_bps":   600_000, "a_bitrate_bps": 128_000},
+        "medium": {"v_bitrate_bps": 1_200_000, "a_bitrate_bps": 128_000},
+        "high":   {"v_bitrate_bps": 2_000_000, "a_bitrate_bps": 192_000},
+    },
+    "720p30": {
+        "low":    {"v_bitrate_bps": 1_500_000, "a_bitrate_bps": 128_000},
+        "medium": {"v_bitrate_bps": 3_000_000, "a_bitrate_bps": 128_000},
+        "high":   {"v_bitrate_bps": 4_500_000, "a_bitrate_bps": 192_000},
+    },
+    "1080p30": {
+        "low":    {"v_bitrate_bps": 3_000_000, "a_bitrate_bps": 128_000},
+        "medium": {"v_bitrate_bps": 4_500_000, "a_bitrate_bps": 128_000},
+        "high":   {"v_bitrate_bps": 6_000_000, "a_bitrate_bps": 192_000},
+    },
 }
+
+# Per (resolution): (encoder_width, encoder_height, ndi_recv_bandwidth).
+# - width/height = None → encoder tracks the source dims (no resize).
+# - bandwidth = "lowest" → camera's proxy stream (~360p); "highest" = native.
+# 720p is the only mode that downscales (1080p in, 720p out), so it asks
+# for the full bandwidth feed and lets ndi-streamer's sws_scale shrink it.
+RESOLUTION_DIMS: dict[str, tuple[Optional[int], Optional[int], str]] = {
+    "360p30":  (None, None, "lowest"),
+    "720p30":  (1280, 720,  "highest"),
+    "1080p30": (None, None, "highest"),
+}
+
+DEFAULT_RESOLUTION = "1080p30"
 
 
 def build_args(
@@ -56,18 +81,31 @@ def build_args(
     rtmp_url: str,
     stream_key: str,
     quality: str,
+    resolution: str = DEFAULT_RESOLUTION,
     muted: bool = False,
     sacrament_image: Optional[Path] = None,
 ) -> list[str]:
     """Build the ndi-streamer argv. Validated against the real binary in Phase 0.
 
-    When `muted=True`, passes --no_audio.
+    `quality` is one of "low" | "medium" | "high"; `resolution` is one of
+    "360p30" | "720p30" | "1080p30". Unknown resolution falls back to
+    DEFAULT_RESOLUTION with a warning logged (operator typo shouldn't crash).
+
+    When `muted=True`, passes --no_audio. (Runtime mute is via SIGUSR2 — see
+    Streamer.set_muted.)
 
     When `sacrament_image` is a path, passes --sacrament_image PATH so the
     binary loads the image at startup. Sacrament mode is then toggled via
     SIGUSR1 to the running subprocess; the RTMP session never restarts.
     """
-    preset = QUALITY_PRESETS[quality]
+    if resolution not in QUALITY_PRESETS:
+        logger.warning(
+            "unknown resolution %r; falling back to %s",
+            resolution, DEFAULT_RESOLUTION,
+        )
+        resolution = DEFAULT_RESOLUTION
+    preset = QUALITY_PRESETS[resolution][quality]
+    width, height, bandwidth = RESOLUTION_DIMS[resolution]
     base = rtmp_url.rstrip("/")
     output = f"{base}/{stream_key}"
     args = [
@@ -78,8 +116,11 @@ def build_args(
         "-a", "aac",
         "--video_bitrate", str(preset["v_bitrate_bps"]),
         "--audio_bitrate", str(preset["a_bitrate_bps"]),
+        "--bandwidth", bandwidth,
         "-o", output,
     ]
+    if width is not None and height is not None:
+        args += ["--target_width", str(width), "--target_height", str(height)]
     if muted:
         args.append("--no_audio")
     if sacrament_image is not None:
@@ -147,7 +188,7 @@ class Streamer:
         self._lock = asyncio.Lock()
         self._stopping_requested = False
         self._stop_grace_s = STOP_GRACE_S
-        self._last_start_params: Optional[tuple[str, str, str]] = None
+        self._last_start_params: Optional[tuple[str, str, str, str]] = None
         self._starting_watchdog_task: Optional[asyncio.Task] = None
         # Mute is in-memory only — defaults unmuted on every process start.
         self._muted = False
@@ -234,7 +275,10 @@ class Streamer:
             return
         self._sacrament_mode = enabled
 
-    async def start(self, source: str, stream_key: str, quality: str) -> None:
+    async def start(
+        self, source: str, stream_key: str, quality: str,
+        resolution: str = DEFAULT_RESOLUTION,
+    ) -> None:
         async with self._lock:
             if self._sm.state not in (State.IDLE, State.ERROR):
                 raise RuntimeError(f"cannot start from state {self._sm.state.value}")
@@ -242,7 +286,7 @@ class Streamer:
             self._stopping_requested = False
             self._log_buffer.clear()
             self._sm.transition(State.STARTING, "user start")
-            self._last_start_params = (source, stream_key, quality)
+            self._last_start_params = (source, stream_key, quality, resolution)
 
             if self._next_spawn is not None:
                 argv, env_overrides = self._next_spawn()
@@ -269,6 +313,7 @@ class Streamer:
                 argv = build_args(
                     self._binary, source, cfg.stream.rtmp_url,
                     stream_key, quality,
+                    resolution=resolution,
                     muted=False,  # signal-driven; SIGUSR2 toggles at runtime
                     sacrament_image=self._last_sacrament_png,
                 )
@@ -416,11 +461,11 @@ class Streamer:
                     return
                 if self._last_start_params is None:
                     return
-                source, key, quality = self._last_start_params
+                source, key, quality, resolution = self._last_start_params
                 # Transition out of ERROR so start() will accept it
                 self._sm.transition(State.IDLE, "auto-restart attempt")
             try:
-                await self.start(source, key, quality)
+                await self.start(source, key, quality, resolution)
             except RuntimeError:
                 continue
             # Watch what happens: success (STREAMING) or another crash (ERROR)

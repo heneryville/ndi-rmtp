@@ -42,12 +42,17 @@ def test_build_args_uses_real_ndi_streamer_flags(tmp_path):
     # Codecs are the FFmpeg encoder names, not abstract codec names
     assert "libx264" in args
     assert "aac" in args
-    # Bitrates are bits-per-second integers, not "4500k"
-    preset = QUALITY_PRESETS["medium"]
+    # Bitrates are bits-per-second integers, not "4500k". Default resolution
+    # is 1080p30 (see DEFAULT_RESOLUTION in streamer.py).
+    preset = QUALITY_PRESETS["1080p30"]["medium"]
     assert "--video_bitrate" in args
     assert str(preset["v_bitrate_bps"]) in args
     assert "--audio_bitrate" in args
     assert str(preset["a_bitrate_bps"]) in args
+    # Default resolution asks the camera for the full-bandwidth feed.
+    assert "--bandwidth" in args
+    bw_idx = args.index("--bandwidth")
+    assert args[bw_idx + 1] == "highest"
     # No --x264-preset flag (ndi-streamer doesn't expose it)
     assert "--x264-preset" not in args
 
@@ -60,13 +65,14 @@ def test_build_args_handles_trailing_slash_in_rtmp_url(tmp_path):
 
 
 def test_quality_presets_are_bps_integers():
-    for name in ("low", "medium", "high"):
-        preset = QUALITY_PRESETS[name]
-        assert isinstance(preset["v_bitrate_bps"], int)
-        assert isinstance(preset["a_bitrate_bps"], int)
-        # Currently sized for 640x360 (YouTube recommends 400-1000 kbps for 360p);
-        # keep a sanity floor of 400 kbps.
-        assert preset["v_bitrate_bps"] >= 400_000
+    for resolution in ("360p30", "720p30", "1080p30"):
+        for name in ("low", "medium", "high"):
+            preset = QUALITY_PRESETS[resolution][name]
+            assert isinstance(preset["v_bitrate_bps"], int)
+            assert isinstance(preset["a_bitrate_bps"], int)
+            # YouTube's 360p floor is ~400 kbps; bigger resolutions need
+            # proportionally more. Keep a generic sanity check.
+            assert preset["v_bitrate_bps"] >= 400_000
 
 
 # ---- start happy path --------------------------------------------------------

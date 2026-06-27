@@ -41,6 +41,7 @@ class StreamConfig:
     active_ward: str = ""
     rtmp_url: str = DEFAULT_RTMP_URL
     quality: str = "medium"
+    resolution: str = "1080p30"  # "360p30" | "720p30" | "1080p30"
 
     def find_ward(self, name: str) -> Ward | None:
         return next((w for w in self.wards if w.name == name), None)

@@ -135,6 +135,27 @@
       showFlash(msg);
     });
 
+    // ---- Optimistic-ish dataset updates --------------------------------
+    // The /api/status poll is on a 2s cadence; without these, clicking
+    // Mute or Sacrament leaves the button in the wrong visible state
+    // until the next poll lands. Both endpoints echo the new flag in
+    // their JSON response, so update data-muted / data-sacrament
+    // immediately on a successful response. /api/status will overwrite
+    // with the authoritative value on the next tick.
+    document.body.addEventListener("htmx:afterRequest", (evt) => {
+      if (!evt.detail?.successful) return;
+      const path = evt.detail.pathInfo?.requestPath;
+      if (path !== "/api/mute" && path !== "/api/sacrament") return;
+      try {
+        const data = JSON.parse(evt.detail.xhr.responseText);
+        if (path === "/api/mute" && typeof data.muted === "boolean") {
+          document.body.dataset.muted = data.muted ? "true" : "false";
+        } else if (path === "/api/sacrament" && typeof data.sacrament_mode === "boolean") {
+          document.body.dataset.sacrament = data.sacrament_mode ? "true" : "false";
+        }
+      } catch (_) { /* ignore */ }
+    });
+
     // Render status JSON into the status region.
     // Strategy: rebuild the visible state header each tick, but for the
     // logs <pre>, only refresh content if it changed AND preserve the

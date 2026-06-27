@@ -188,7 +188,7 @@
         const t = data.cpu_temp_c;
         const tempCls = t == null ? '' : t > 80 ? 'temp-hot' : t > 70 ? 'temp-warm' : 'temp-cool';
         const tempHTML = t == null ? '' :
-          `<p class="temp ${tempCls}">CPU ${t.toFixed(1)}°C</p>`;
+          `<p class="temp ${tempCls}">CPU ${t.toFixed(1)}°C <small>(max 80°C)</small></p>`;
 
         const headerHTML = `
           <h2>Status</h2>

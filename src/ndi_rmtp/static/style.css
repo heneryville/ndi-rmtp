@@ -54,6 +54,8 @@ button:hover { background: #1d4ed8; }
 .temp-cool { color: #86efac; background: #0a2517; }
 .temp-warm { color: #fde68a; background: #2a2010; }
 .temp-hot  { color: #fca5a5; background: #2a1414; }
+/* "(max 80°C)" label inside the chip — same colour family, less prominent. */
+.temp small { font-size: 0.78em; opacity: 0.7; margin-left: 0.4em; }
 
 /* Flash banner for API errors. Sits below the page header so it's the
    first thing the operator sees when an action fails. Auto-dismissed by

@@ -182,11 +182,20 @@
 
         // Replace the state header (state + optional uptime + optional error).
         // We rebuild only the header parts, not the logs, so scroll is preserved.
+        // Pi CPU temperature chip. /api/status returns null on macOS dev
+        // (no /sys/class/thermal). Colour-coded so the operator can glance
+        // at it without parsing a number: cool < 70, warm 70-80, hot > 80.
+        const t = data.cpu_temp_c;
+        const tempCls = t == null ? '' : t > 80 ? 'temp-hot' : t > 70 ? 'temp-warm' : 'temp-cool';
+        const tempHTML = t == null ? '' :
+          `<p class="temp ${tempCls}">CPU ${t.toFixed(1)}°C</p>`;
+
         const headerHTML = `
           <h2>Status</h2>
           <p class="state state-${stateLower}">${data.state}
             ${data.state === 'STREAMING' ? `<small>${formatUptime(data.uptime_s)}</small>` : ''}
           </p>
+          ${tempHTML}
           ${data.last_error ? `<p class="err">${escapeHtml(data.last_error)}</p>` : ''}
         `;
 

@@ -41,6 +41,20 @@ button:hover { background: #1d4ed8; }
 .state small { font-size: 0.85rem; color: #9aa0a6; margin-left: 0.5rem; }
 .err { color: #f87171; background: #2a1818; padding: 0.5rem 0.75rem; border-radius: 4px; }
 
+/* Pi CPU temperature chip. Three tiers: cool / warm / hot. Hidden by
+   templating when /sys/class/thermal isn't available (e.g., macOS dev). */
+.temp {
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 4px;
+  margin: 0.25rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.temp-cool { color: #86efac; background: #0a2517; }
+.temp-warm { color: #fde68a; background: #2a2010; }
+.temp-hot  { color: #fca5a5; background: #2a1414; }
+
 /* Flash banner for API errors. Sits below the page header so it's the
    first thing the operator sees when an action fails. Auto-dismissed by
    JS after a few seconds. */

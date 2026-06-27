@@ -26,6 +26,22 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+_CPU_TEMP_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
+
+
+def _read_cpu_temp_c() -> Optional[float]:
+    """Return CPU temperature in Celsius, or None if unavailable.
+
+    Reads the standard Linux thermal interface (present on the Pi).
+    Returns None on macOS dev (no /sys), so the UI just hides the chip.
+    """
+    try:
+        millideg = int(_CPU_TEMP_PATH.read_text().strip())
+        return round(millideg / 1000, 1)
+    except (OSError, ValueError):
+        return None
+
+
 def _clamp_speed(v: float) -> float:
     """Clamp PTZ speed values into NDI's expected [-1.0, 1.0] range."""
     return max(-1.0, min(1.0, float(v)))
@@ -66,7 +82,9 @@ def build_app(
 
     @app.get("/api/status", dependencies=[Depends(require_auth)])
     def api_status():
-        return streamer.status().to_dict()
+        data = streamer.status().to_dict()
+        data["cpu_temp_c"] = _read_cpu_temp_c()
+        return data
 
     @app.get("/api/sources", dependencies=[Depends(require_auth)])
     async def api_sources():

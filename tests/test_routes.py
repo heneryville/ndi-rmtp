@@ -79,7 +79,13 @@ def test_api_status_returns_shape(client):
     r = client.get("/api/status", headers=_basic("admin", "hunter2"))
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"state", "uptime_s", "last_error", "log_tail"}
+    # Required keys; extra keys (muted, sacrament_mode, cpu_temp_c) are
+    # added over time, so don't assert an exact set.
+    assert {"state", "uptime_s", "last_error", "log_tail"} <= set(body)
+    # cpu_temp_c is None on macOS dev/CI (no /sys/class/thermal); a float
+    # on the Pi. The shape contract is "key exists, value is None or float".
+    assert "cpu_temp_c" in body
+    assert body["cpu_temp_c"] is None or isinstance(body["cpu_temp_c"], (int, float))
 
 
 def test_api_sources_returns_list(client, discovery):

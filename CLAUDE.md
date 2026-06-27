@@ -265,8 +265,15 @@ absorbs input-dim variation and the encoder/muxer stay stable.
 
 - `scripts/ndi-streamer-no-audio.patch` is a misleading filename. It now
   contains all our C modifications. `TODO.md` flags the rename.
-- `config.toml` is in the repo (and in git history) **on purpose** — the
-  user's distribution model is to clone with config baked in. The repo is
+- Two configs ship in the repo: `config.south.toml` and
+  `config.north.toml`, one per appliance. `config.toml` is a symlink
+  to `config.south.toml` so local dev (`uv run ndi-rmtp` from the
+  project root) "just works" — south's wards/keys are the local
+  default. `scripts/install.sh` prompts north/south during deploy and
+  copies the chosen file to `/home/ndi-rmtp/.config/ndi-rmtp/config.toml`
+  (override interactively via `NDI_RMTP_DEPLOYMENT={south,north,keep}`).
+  The configs are in the repo and git history **on purpose** — the
+  distribution model is to clone with config baked in. The repo is
   private. If visibility ever changes, rotate keys first.
 - `~/Downloads/jordan_willows_sacrament_overlay.svg` is referenced
   historically in some docs as the source of truth for the sacrament

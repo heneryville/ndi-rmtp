@@ -133,7 +133,40 @@ sudo -u "$SVC_USER" -H env "PATH=/usr/local/bin:$PATH" uv sync
 
 # --- Config dir for the service user ---
 say "Preparing config directory"
-install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "/home/$SVC_USER/.config/ndi-rmtp"
+SVC_CFG_DIR="/home/$SVC_USER/.config/ndi-rmtp"
+SVC_CFG="$SVC_CFG_DIR/config.toml"
+install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$SVC_CFG_DIR"
+
+# --- Deployment-specific config ---
+# Two appliances exist (south and north building), each with its own
+# ward roster + stream keys. Ask which we're installing onto. The
+# choice is the SHIPPED config from the repo (config.south.toml /
+# config.north.toml); it gets copied to the service user's
+# config.toml. Re-running install.sh asks again — pick `skip` to
+# preserve any in-place UI edits.
+DEPLOYMENT="${NDI_RMTP_DEPLOYMENT:-}"
+if [[ -z "$DEPLOYMENT" ]]; then
+  printf "\nWhich deployment is this appliance?\n  [s]outh  -> Jordan Willows 1st/7th + Snow Springs (snowspringssouth.local)\n  [n]orth  -> Jordan Willows 2nd, Lehi 25th, Pioneer Crossing, Sommerset (snowspringsnorth.local)\n  [k]eep   -> leave existing config.toml alone (use this for code-only updates)\nChoose [s/n/k]: "
+  read -r DEPLOYMENT_INPUT
+  case "$DEPLOYMENT_INPUT" in
+    s|south)  DEPLOYMENT="south" ;;
+    n|north)  DEPLOYMENT="north" ;;
+    k|keep)   DEPLOYMENT="keep" ;;
+    *) echo "Unrecognised: $DEPLOYMENT_INPUT — exiting"; exit 1 ;;
+  esac
+fi
+case "$DEPLOYMENT" in
+  south|north)
+    SRC_CFG="$PROJECT_ROOT/config.$DEPLOYMENT.toml"
+    [[ -f "$SRC_CFG" ]] || { echo "Missing $SRC_CFG"; exit 1; }
+    say "Installing $DEPLOYMENT config -> $SVC_CFG"
+    install -o "$SVC_USER" -g "$SVC_USER" -m 0600 "$SRC_CFG" "$SVC_CFG"
+    ;;
+  keep)
+    say "Leaving existing $SVC_CFG in place"
+    ;;
+  *) echo "Bad NDI_RMTP_DEPLOYMENT=$DEPLOYMENT (want south|north|keep)"; exit 1 ;;
+esac
 
 # --- systemd unit ---
 say "Installing systemd unit"

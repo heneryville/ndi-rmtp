@@ -83,6 +83,21 @@ body[data-state="STARTING"] #start-btn,
 body[data-state="STREAMING"] #start-btn,
 body[data-state="STOPPING"] #start-btn { display: none; }
 body[data-state="STOPPING"] #stop-btn { opacity: 0.6; pointer-events: none; }
+
+/* Lock the camera and ward selectors while a stream is live (or
+   transitioning). Operators shouldn't be able to repoint the appliance
+   mid-meeting; to change either, hit Stop first. Quality stays
+   interactive — changing it only takes effect on the next Start. */
+body[data-state="STARTING"] select[name="source"],
+body[data-state="STREAMING"] select[name="source"],
+body[data-state="STOPPING"] select[name="source"],
+body[data-state="STARTING"] select[name="active_ward"],
+body[data-state="STREAMING"] select[name="active_ward"],
+body[data-state="STOPPING"] select[name="active_ward"] {
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: not-allowed;
+}
 body[data-state="ERROR"] #start-btn::before { content: "↻ "; }
 
 /* Mute/Unmute: only visible while actively streaming, and exactly one of

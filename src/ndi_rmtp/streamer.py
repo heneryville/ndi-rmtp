@@ -334,6 +334,13 @@ class Streamer:
             if self._sm.state not in (State.STARTING, State.STREAMING, State.ERROR):
                 return
             self._stopping_requested = True
+            # Forget the sacrament-mode flag on stop so the next start
+            # doesn't surprise the operator with the SACRAMENT MODE overlay
+            # left over from the previous run. The C side will also
+            # initialise audio_muted=0/sacrament_active=0 on its next
+            # spawn, so resetting Python state here keeps the UI honest
+            # between stop and the next start.
+            self._sacrament_mode = False
             if self._sm.state in (State.STARTING, State.STREAMING):
                 self._sm.transition(State.STOPPING, "user stop")
             proc = self._proc

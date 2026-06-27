@@ -150,7 +150,7 @@ journalctl -u ndi-rmtp.service -n 50 --no-pager | grep -A2 "first-run bootstrap"
 HOSTNAME_LOCAL="$(hostname).local"
 cat <<EOF
 
-==> Done. Web UI: http://${HOSTNAME_LOCAL}:8080
+==> Done. Web UI: http://${HOSTNAME_LOCAL}/
 
   - systemctl status ndi-rmtp
   - journalctl -u ndi-rmtp -f

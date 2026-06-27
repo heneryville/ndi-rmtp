@@ -187,3 +187,10 @@ body[data-sacrament="true"] .sacrament-overlay { display: flex; }
   border: 1px solid #2a2e36;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+.site-footer {
+  text-align: center;
+  padding: 1.5rem 1rem 2rem;
+  color: #6b7280;
+  font-size: 0.9rem;
+}

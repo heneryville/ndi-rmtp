@@ -16,29 +16,29 @@ apt-get update
 apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config curl ca-certificates rsync \
     libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev \
-    ffmpeg python3.11 python3.11-venv librsvg2-bin
+    libavahi-client-dev \
+    ffmpeg python3 python3-venv librsvg2-bin
 
 # --- FFmpeg 7 for libndi's HX/HX3 decoder ---
-# libndi 6.3.2 dlopens libavcodec.so.61 / libavutil.so.59 (FFmpeg 7) for HX
-# and HX3 H.264/H.265 decode. Pi OS Bookworm only ships FFmpeg 5
-# (libavcodec.so.59), so without this step, libndi falls back to a static
-# "Video decoder not found" splash for any HX/HX3 source — including the
-# UHD camera. We install jellyfin-ffmpeg7's prefixed build (in
-# /usr/lib/jellyfin-ffmpeg) so it coexists with system FFmpeg 5, then add
-# its lib dir to ldconfig so libndi's dlopen finds the .so.61 libs.
-# Remove this workaround once Pi OS Trixie (FFmpeg 7) is the install target.
-JF_FFMPEG_VERSION="7.1.4-3"
-JF_FFMPEG_DEB="jellyfin-ffmpeg7_${JF_FFMPEG_VERSION}-bookworm_arm64.deb"
-JF_FFMPEG_URL="https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JF_FFMPEG_VERSION}/${JF_FFMPEG_DEB}"
-if ! dpkg -s jellyfin-ffmpeg7 >/dev/null 2>&1; then
-  say "Installing jellyfin-ffmpeg7 ${JF_FFMPEG_VERSION} (provides libavcodec.so.61 for libndi HX/HX3 decode)"
+# libndi 6.3.2 dlopens libavcodec.so.61 / libavutil.so.59 (FFmpeg 7) for HX/HX3
+# decode. Pi OS Trixie ships FFmpeg 7 in the base repo, so the system ffmpeg
+# package installed above provides those SONAMEs already. Bookworm only ships
+# FFmpeg 5 (libavcodec.so.59), so on Bookworm we side-load jellyfin-ffmpeg7's
+# prefixed build (/usr/lib/jellyfin-ffmpeg/) and add its lib dir to ldconfig.
+# This guard skips the workaround entirely once libavcodec.so.61 is on the
+# linker path.
+if ! ldconfig -p | grep -q '\blibavcodec\.so\.61\b'; then
+  JF_FFMPEG_VERSION="7.1.4-3"
+  JF_FFMPEG_DEB="jellyfin-ffmpeg7_${JF_FFMPEG_VERSION}-bookworm_arm64.deb"
+  JF_FFMPEG_URL="https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JF_FFMPEG_VERSION}/${JF_FFMPEG_DEB}"
+  say "System ffmpeg lacks libavcodec.so.61; installing jellyfin-ffmpeg7 ${JF_FFMPEG_VERSION}"
   curl -fsSL -o "/tmp/${JF_FFMPEG_DEB}" "$JF_FFMPEG_URL"
   apt-get install -y "/tmp/${JF_FFMPEG_DEB}"
   rm -f "/tmp/${JF_FFMPEG_DEB}"
-fi
-if [[ ! -f /etc/ld.so.conf.d/jellyfin-ffmpeg.conf ]]; then
-  echo /usr/lib/jellyfin-ffmpeg/lib > /etc/ld.so.conf.d/jellyfin-ffmpeg.conf
-  ldconfig
+  if [[ ! -f /etc/ld.so.conf.d/jellyfin-ffmpeg.conf ]]; then
+    echo /usr/lib/jellyfin-ffmpeg/lib > /etc/ld.so.conf.d/jellyfin-ffmpeg.conf
+    ldconfig
+  fi
 fi
 
 # --- uv as the service user ---

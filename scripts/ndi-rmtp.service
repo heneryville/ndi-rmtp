@@ -15,6 +15,8 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # Pin the config path on Pi so it lives in the service user's home (not in
 # /opt/ndi-rmtp/app, which would be the default project-local lookup).
 Environment=NDI_RMTP_CONFIG=/home/ndi-rmtp/.config/ndi-rmtp/config.toml
+# Listen on the standard HTTP port in deployed mode (dev defaults to 8080).
+Environment=NDI_RMTP_PORT=80
 
 # Hardening
 NoNewPrivileges=true
@@ -25,6 +27,9 @@ PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+# Allow binding port 80 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

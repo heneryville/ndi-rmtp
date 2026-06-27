@@ -59,7 +59,7 @@ class PtzPreset:
 @dataclass
 class PtzConfig:
     presets: list[PtzPreset] = field(default_factory=list)
-    recall_speed: float = 0.25   # 0.0 slowest .. 1.0 fastest, used by preset recall
+    recall_speed: float = 0.10   # 0.0 slowest .. 1.0 fastest, used by preset recall
     move_speed: float = 0.2      # 0.0 .. 1.0, used by d-pad and zoom hold
 
 

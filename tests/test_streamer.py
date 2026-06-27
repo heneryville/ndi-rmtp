@@ -42,14 +42,14 @@ def test_build_args_uses_real_ndi_streamer_flags(tmp_path):
     # Codecs are the FFmpeg encoder names, not abstract codec names
     assert "libx264" in args
     assert "aac" in args
-    # Bitrates are bits-per-second integers, not "4500k". Default resolution
-    # is 1080p30 (see DEFAULT_RESOLUTION in streamer.py).
-    preset = QUALITY_PRESETS["1080p30"]["medium"]
+    # Bitrates are bits-per-second integers, not "4500k". Quality "medium"
+    # is currently 1080p30 (see QUALITY_PRESETS in streamer.py).
+    preset = QUALITY_PRESETS["medium"]
     assert "--video_bitrate" in args
     assert str(preset["v_bitrate_bps"]) in args
     assert "--audio_bitrate" in args
     assert str(preset["a_bitrate_bps"]) in args
-    # Default resolution asks the camera for the full-bandwidth feed.
+    # Medium runs at the camera's full-bandwidth feed.
     assert "--bandwidth" in args
     bw_idx = args.index("--bandwidth")
     assert args[bw_idx + 1] == "highest"
@@ -65,14 +65,15 @@ def test_build_args_handles_trailing_slash_in_rtmp_url(tmp_path):
 
 
 def test_quality_presets_are_bps_integers():
-    for resolution in ("360p30", "720p30", "1080p30"):
-        for name in ("low", "medium", "high"):
-            preset = QUALITY_PRESETS[resolution][name]
-            assert isinstance(preset["v_bitrate_bps"], int)
-            assert isinstance(preset["a_bitrate_bps"], int)
-            # YouTube's 360p floor is ~400 kbps; bigger resolutions need
-            # proportionally more. Keep a generic sanity check.
-            assert preset["v_bitrate_bps"] >= 400_000
+    for name in ("low", "medium", "high"):
+        preset = QUALITY_PRESETS[name]
+        assert isinstance(preset["v_bitrate_bps"], int)
+        assert isinstance(preset["a_bitrate_bps"], int)
+        # YouTube's 360p floor is ~400 kbps; bigger resolutions need
+        # proportionally more. Keep a generic sanity check.
+        assert preset["v_bitrate_bps"] >= 400_000
+        # Each preset must reference a valid resolution.
+        assert preset["resolution"] in ("360p30", "720p30", "1080p30")
 
 
 # ---- start happy path --------------------------------------------------------

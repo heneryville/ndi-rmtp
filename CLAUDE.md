@@ -208,30 +208,38 @@ CBR with `filler=1` keeps the actual bitrate pinned at target even on
 static content (sacrament image). Changing these blindly will regress
 live performance.
 
-Bitrate presets in `streamer.py:QUALITY_PRESETS` are a 2D dict keyed by
-`(resolution, quality)`. Each preset lands inside YouTube's recommended
-range for that resolution — sending too HIGH a bitrate triggers YouTube's
-"bitrate too high" warning AND can cause them to transcode the stream
-down to a lower quality tier on playback.
+### Quality knob: one ladder, resolution + bitrate coupled
 
-### Resolution config knob: bandwidth + target dims
+`streamer.py:QUALITY_PRESETS` is a single 1D dict keyed by quality —
+`high` (default), `medium`, `low`. Each entry holds a resolution AND a
+video+audio bitrate. There is no separate resolution config; the operator
+picks quality and gets a sensible resolution for free.
 
-`[stream] resolution` in `config.toml` accepts `"360p30"`, `"720p30"`, or
-`"1080p30"` (default `1080p30`). The Python side maps these to a
-`(width, height, bandwidth)` triple via `RESOLUTION_DIMS` and passes them
-to ndi-streamer as `--target_width`, `--target_height`, `--bandwidth`.
+The ladder is designed for *graceful degradation under network stress*,
+not for fine-grained tuning:
 
-Two non-obvious things to know:
+- `high`   — 1080p30 @ 6 Mbps + 192 kbps audio (top of YouTube's 1080p range)
+- `medium` — 1080p30 @ 3 Mbps + 128 kbps audio (bottom of same range; same
+             picture, ~half the bandwidth)
+- `low`    — 360p30  @ 600 kbps + 128 kbps audio (drops resolution; ~10x
+             less total bandwidth than high — true escape hatch)
+
+Each step lands inside YouTube's recommended range for its resolution.
+Sending OVER YouTube's range triggers their "bitrate too high" warning
+and may cause downscaled playback.
+
+`RESOLUTION_DIMS` still maps a resolution string to
+`(width, height, bandwidth)` for the ndi-streamer CLI flags. Two
+non-obvious things to know about that mapping:
 
 - `bandwidth=lowest` is the camera's **proxy stream** (typically ~360p,
   H.264, much smaller payload), not just a quality preference. `highest`
   is the camera's native feed. NDI HX/HX3 cameras decide independently
   which streams to publish at which bandwidths.
-- 720p mode is the only resolution that *downscales* in our pipeline:
-  it asks the camera for the full-bandwidth feed (`highest`) and lets
-  `sws_scale` inside ndi-streamer shrink the result to 1280×720 before
-  encoding. 360p and 1080p both ask the camera for natively-sized
-  frames and don't resize at all.
+- 720p mode (currently unused by any quality preset) is the only
+  resolution that *downscales* in our pipeline: asks the camera for the
+  full-bandwidth feed (`highest`) and lets `sws_scale` inside
+  ndi-streamer shrink the result to 1280×720 before encoding.
 
 The first-frame dimensions check in the encoder loop (originally a
 sanity bail-out when the input feed's resolution drifts) is gated on

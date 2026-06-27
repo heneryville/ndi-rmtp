@@ -15,6 +15,8 @@
          hx-swap="none">…</div>
   </header>
 
+  <div id="flash" class="flash flash-error" hidden></div>
+
   <main>
     <section class="card">
       <h2>Configure</h2>
@@ -41,14 +43,9 @@
                     {% if config.stream.active_ward == w.name %}selected{% endif %}>{{ w.name }}</option>
             {% endfor %}
           </select>
-          <small class="hint">Wards are managed in <code>./config.toml</code> under <code>[[stream.wards]]</code>. Each carries its own stream key and sacrament overlay.</small>
+          <small class="hint">Each ward has its own YouTube stream and sacrament screen. Pick the one you are streaming today.</small>
           {% else %}
-          <p class="err">No wards configured. Add at least one to <code>./config.toml</code>:
-            <pre class="code-sample">[[stream.wards]]
-name = "My Ward"
-key = "xxxx-xxxx-xxxx-xxxx"
-sacrament_image = "assets/sacrament/my_ward.svg"</pre>
-          </p>
+          <p class="err">No wards have been set up on this appliance yet. Please contact your Stake Technology Specialist.</p>
           {% endif %}
         </label>
 
@@ -111,6 +108,33 @@ sacrament_image = "assets/sacrament/my_ward.svg"</pre>
   </main>
 
   <script>
+    // ---- Flash banner -----------------------------------------------------
+    // htmx swallows non-2xx responses by default. For operator-facing
+    // actions (Start, Mute, Sacrament, PTZ buttons) we want the rewritten
+    // server-side error messages to actually surface. Listen for
+    // responseError and pull `detail` out of the JSON body.
+
+    const _flashEl = document.getElementById("flash");
+    let _flashTimer = null;
+    function showFlash(msg) {
+      _flashEl.textContent = msg;
+      _flashEl.hidden = false;
+      clearTimeout(_flashTimer);
+      _flashTimer = setTimeout(() => { _flashEl.hidden = true; }, 8000);
+    }
+    document.body.addEventListener("htmx:responseError", (evt) => {
+      const xhr = evt.detail.xhr;
+      // The preview endpoint 503s constantly during boot; don't spam the
+      // operator with those — the UI hides the preview img on 503 anyway.
+      if (evt.detail.pathInfo?.requestPath?.startsWith("/api/preview.jpg")) return;
+      let msg = `Something went wrong (HTTP ${xhr.status}). Please contact your Stake Technology Specialist.`;
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data && data.detail) msg = data.detail;
+      } catch (_) { /* leave generic fallback */ }
+      showFlash(msg);
+    });
+
     // Render status JSON into the status region.
     // Strategy: rebuild the visible state header each tick, but for the
     // logs <pre>, only refresh content if it changed AND preserve the
@@ -222,7 +246,7 @@ sacrament_image = "assets/sacrament/my_ward.svg"</pre>
             `<button type="button" class="preset-btn"
                      data-slot="${p.slot}" data-speed="${recallSpeed}">${escapeHtml(p.name)}</button>`
           ).join("")
-        : `<p class="hint">No presets defined. Add some to <code>config.toml</code> under <code>[[ptz.presets]]</code>.</p>`;
+        : `<p class="hint">No camera presets have been set up. Contact your Stake Technology Specialist if you need them.</p>`;
     }
 
     async function fetchPtzInfo() {

@@ -161,7 +161,9 @@ def test_api_config_rejects_unknown_active_ward(client):
         data={"active_ward": "Does Not Exist"},
     )
     assert r.status_code == 400
-    assert "unknown" in r.text.lower()
+    # Operator-facing error message escalates to the Stake Tech Specialist
+    # rather than naming the ward — see the message rewrite commit.
+    assert "stake" in r.text.lower()
 
 
 def test_api_start_uses_active_wards_value(client, streamer):

@@ -83,7 +83,7 @@ def build_app(
         if active is None or not active.key:
             raise HTTPException(
                 status_code=400,
-                detail="No active ward. Add one in config.toml under [[stream.wards]] and set [stream] active_ward.",
+                detail="No ward is selected or the selected ward isn't set up correctly. Please contact your Stake Technology Specialist.",
             )
         if quality not in ("low", "medium", "high"):
             raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")
@@ -99,7 +99,7 @@ def build_app(
         if matched is None:
             raise HTTPException(
                 status_code=409,
-                detail=f"NDI source not found: {source!r}",
+                detail="Camera not found on the network. Make sure it is powered on, then wait a moment and try again.",
             )
 
         # Persist the friendly name so the UI restores the selection across restarts.
@@ -152,7 +152,7 @@ def build_app(
     @app.post("/api/ptz/preset/{slot}", dependencies=[Depends(require_auth)])
     async def api_ptz_recall(slot: int, speed: Optional[float] = Form(None)):
         if ptz is None:
-            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+            raise HTTPException(status_code=503, detail="Camera controls are unavailable. Make sure the camera is connected on the network.")
         if not (0 <= slot <= 99):
             raise HTTPException(status_code=400, detail="slot must be 0..99")
         await ptz.recall_preset(slot, speed)
@@ -161,7 +161,7 @@ def build_app(
     @app.post("/api/ptz/preset/{slot}/store", dependencies=[Depends(require_auth)])
     async def api_ptz_store(slot: int):
         if ptz is None:
-            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+            raise HTTPException(status_code=503, detail="Camera controls are unavailable. Make sure the camera is connected on the network.")
         if not (0 <= slot <= 99):
             raise HTTPException(status_code=400, detail="slot must be 0..99")
         await ptz.store_preset(slot)
@@ -170,31 +170,35 @@ def build_app(
     @app.post("/api/ptz/pan_tilt", dependencies=[Depends(require_auth)])
     async def api_ptz_pan_tilt(pan: float = Form(...), tilt: float = Form(...)):
         if ptz is None:
-            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+            raise HTTPException(status_code=503, detail="Camera controls are unavailable. Make sure the camera is connected on the network.")
         await ptz.pan_tilt(_clamp_speed(pan), _clamp_speed(tilt))
         return {"ok": True}
 
     @app.post("/api/ptz/zoom", dependencies=[Depends(require_auth)])
     async def api_ptz_zoom(speed: float = Form(...)):
         if ptz is None:
-            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+            raise HTTPException(status_code=503, detail="Camera controls are unavailable. Make sure the camera is connected on the network.")
         await ptz.zoom(_clamp_speed(speed))
         return {"ok": True}
 
     @app.post("/api/ptz/stop", dependencies=[Depends(require_auth)])
     async def api_ptz_stop():
         if ptz is None:
-            raise HTTPException(status_code=503, detail="PTZ controller unavailable")
+            raise HTTPException(status_code=503, detail="Camera controls are unavailable. Make sure the camera is connected on the network.")
         await ptz.stop()
         return {"ok": True}
 
     @app.get("/api/preview.jpg", dependencies=[Depends(require_auth)])
     async def api_preview():
+        # 503s here are normal during boot and whenever the camera isn't on
+        # the network yet; the UI hides the preview frame and silently
+        # retries, so the operator never sees these unless they're looking
+        # at the network tab.
         if ptz is None:
-            raise HTTPException(status_code=503, detail="No NDI receiver available")
+            raise HTTPException(status_code=503, detail="Camera not connected yet")
         jpg = await ptz.snapshot_jpeg()
         if jpg is None:
-            raise HTTPException(status_code=503, detail="No frame yet")
+            raise HTTPException(status_code=503, detail="Waiting for first frame from camera")
         return Response(
             content=jpg,
             media_type="image/jpeg",
@@ -211,7 +215,7 @@ def build_app(
             if cfg.stream.find_ward(active_ward) is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unknown ward {active_ward!r}. Add it to config.toml under [[stream.wards]].",
+                    detail="The selected ward is no longer set up on this appliance. Please contact your Stake Technology Specialist.",
                 )
             cfg.stream.active_ward = active_ward
         if quality is not None:

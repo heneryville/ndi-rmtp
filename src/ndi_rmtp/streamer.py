@@ -264,8 +264,8 @@ class Streamer:
         # nothing visible. We refuse that case for clarity.
         if enabled and self._last_sacrament_png is None:
             raise RuntimeError(
-                "Active ward has no sacrament_image; restart the stream "
-                "after configuring one."
+                "This ward doesn't have a sacrament screen set up. "
+                "Please contact your Stake Technology Specialist."
             )
         try:
             self._proc.send_signal(signal.SIGUSR1)

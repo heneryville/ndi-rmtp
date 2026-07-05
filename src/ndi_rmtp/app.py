@@ -163,7 +163,16 @@ def build_app(
     @app.get("/api/ptz/info", dependencies=[Depends(require_auth)])
     async def api_ptz_info():
         if ptz is None:
-            return {"supported": False, "connected": False, "source": None, "presets": []}
+            cfg = get_config()
+            return {
+                "supported": False,
+                "connected": False,
+                "source": None,
+                "presets": [{"name": p.name, "slot": p.slot} for p in cfg.ptz.presets],
+                "default_preset": cfg.ptz.default_preset,
+                "recall_speed": cfg.ptz.recall_speed,
+                "move_speed": cfg.ptz.move_speed,
+            }
         return await ptz.info()
 
     @app.post("/api/ptz/preset/{slot}", dependencies=[Depends(require_auth)])
@@ -226,6 +235,7 @@ def build_app(
     def api_config(
         active_ward: Optional[str] = Form(None),
         quality: Optional[str] = Form(None),
+        default_preset: Optional[str] = Form(None),
     ):
         cfg = get_config()
         if active_ward is not None:
@@ -239,6 +249,12 @@ def build_app(
             if quality not in ("low", "medium", "high"):
                 raise HTTPException(status_code=400, detail=f"Bad quality {quality!r}")
             cfg.stream.quality = quality
+        if default_preset is not None:
+            # Empty string clears the default (no auto-recall on start); any
+            # other value must match a configured preset name.
+            if default_preset and not any(p.name == default_preset for p in cfg.ptz.presets):
+                raise HTTPException(status_code=400, detail=f"Unknown preset {default_preset!r}")
+            cfg.ptz.default_preset = default_preset
         cfg.save(config_path)
         return {"ok": True}
 

@@ -130,6 +130,7 @@ class PtzController:
             "presets": [{"name": p.name, "slot": p.slot} for p in cfg.ptz.presets],
             "recall_speed": cfg.ptz.recall_speed,
             "move_speed": cfg.ptz.move_speed,
+            "default_preset": cfg.ptz.default_preset,
         }
 
     # ---- preview ----------------------------------------------------------------

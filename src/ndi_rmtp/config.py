@@ -61,6 +61,11 @@ class PtzConfig:
     presets: list[PtzPreset] = field(default_factory=list)
     recall_speed: float = 0.10   # 0.0 slowest .. 1.0 fastest, used by preset recall
     move_speed: float = 0.2      # 0.0 .. 1.0, used by d-pad and zoom hold
+    # Preset to snap to automatically when a stream starts, so viewers see a
+    # sensible framing during YouTube's "Preparing stream" window instead of
+    # whatever the camera was pointed at last. Matched by name against
+    # `presets`; missing / empty / unmatched → no auto-recall.
+    default_preset: str = "Stand Far"
 
 
 @dataclass

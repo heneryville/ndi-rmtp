@@ -94,6 +94,13 @@ class Config:
         )
 
     def save(self, path: Path) -> None:
+        # Resolve symlinks first so os.replace() rewrites the linked file
+        # instead of clobbering the symlink itself. Dev machines ship with
+        # `config.toml` as a symlink to `config.south.toml` (or north); an
+        # atomic replace on the symlink would silently break the link and
+        # divergently save future edits into a shadow file.
+        if path.is_symlink():
+            path = path.resolve()
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", suffix=".toml", dir=str(path.parent))
         tmp_path = Path(tmp_name)

@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
   <title>NDI → YouTube Relay</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
@@ -18,8 +20,12 @@
   <div id="flash" class="flash flash-error" hidden></div>
 
   <main>
-    <section class="card">
-      <h2>Configure</h2>
+    <!-- =====================================================================
+         SETUP PAGE  (visible when body[data-state="IDLE" | "ERROR"])
+         Everything the operator needs to configure and start a stream.
+         ================================================================= -->
+    <section class="card setup-only">
+      <h2>Set up stream</h2>
       <form hx-post="/api/start" hx-swap="none" id="start-form">
         <label>NDI Source
           <select name="source"
@@ -49,67 +55,299 @@
           {% endif %}
         </label>
 
+        {% if config.ptz.presets %}
+        <label>Starting camera position
+          <select id="default-preset-select"
+                  hx-post="/api/config"
+                  hx-trigger="change"
+                  hx-include="this"
+                  hx-swap="none"
+                  name="default_preset">
+            {% for p in config.ptz.presets %}
+            <option value="{{ p.name }}"
+                    {% if config.ptz.default_preset == p.name %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <small class="hint">Camera snaps here when the stream starts, so viewers see a good framing during YouTube's “Preparing stream” window.</small>
+        </label>
+        {% endif %}
+
         <fieldset>
           <legend>Quality</legend>
           {% for q in qualities %}
-          <label>
+          <label class="quality-pill">
             <input type="radio" name="quality" value="{{ q }}"
-                   {% if config.stream.quality == q %}checked{% endif %}> {{ q }}
+                   {% if config.stream.quality == q %}checked{% endif %}>
+            <span>{{ q }}</span>
           </label>
           {% endfor %}
         </fieldset>
-
-        <div class="actions">
-          <button type="submit" id="start-btn">▶ Start Stream</button>
-          <button type="button" id="mute-btn"
-                  hx-post="/api/mute" hx-vals='{"muted": true}' hx-swap="none">🔇 Mute audio</button>
-          <button type="button" id="unmute-btn"
-                  hx-post="/api/mute" hx-vals='{"muted": false}' hx-swap="none">🔊 Unmute</button>
-          <button type="button" id="sacrament-btn"
-                  hx-post="/api/sacrament" hx-vals='{"enabled": true}' hx-swap="none">Sacrament</button>
-          <button type="button" id="exit-sacrament-btn"
-                  hx-post="/api/sacrament" hx-vals='{"enabled": false}' hx-swap="none">↩ Exit Sacrament</button>
-          <button type="button" id="stop-btn"
-                  hx-post="/api/stop" hx-swap="none">■ Stop</button>
-        </div>
       </form>
     </section>
 
-    <section class="card" id="ptz-card" hidden>
-      <h2>PTZ Camera <small id="ptz-source"></small></h2>
+    <!-- =====================================================================
+         STREAMING PAGE  (visible when body[data-state] ∈ STARTING/STREAMING/STOPPING)
+         ================================================================= -->
+    <section class="stream-chip streaming-only" aria-live="polite">
+      <div class="chip-line">
+        <span class="chip-dot" aria-hidden="true"></span>
+        <span class="chip-ward">{{ config.stream.active_ward or "—" }}</span>
+        <span class="chip-sep">·</span>
+        <span class="chip-quality">{{ config.stream.quality }}</span>
+      </div>
+      <div class="chip-uptime">00:00:00</div>
+    </section>
+
+    <section class="card streaming-only" id="ptz-card" hidden>
+      <h2>Camera <small id="ptz-source"></small></h2>
       <div class="ptz-preview-wrap">
-        <img id="ptz-preview" class="ptz-preview" alt="Live camera preview" hidden>
+        <img id="ptz-preview" class="ptz-preview" alt="" hidden>
+        <div class="ptz-preview-placeholder">Waiting for camera…</div>
         <div class="sacrament-overlay" aria-hidden="true">SACRAMENT MODE</div>
       </div>
       <div id="presets-grid" class="presets-grid"></div>
       <details class="ptz-manual">
         <summary>Manual control</summary>
-        <div class="ptz-pad">
-          <button type="button" class="ptz-arrow" data-pan="0" data-tilt="0.5">↑</button>
-          <div class="ptz-row">
-            <button type="button" class="ptz-arrow" data-pan="0.5" data-tilt="0">←</button>
-            <button type="button" class="ptz-stop" id="ptz-stop">◉</button>
-            <button type="button" class="ptz-arrow" data-pan="-0.5" data-tilt="0">→</button>
+        <div class="ptz-manual-body">
+          <div class="ptz-pad">
+            <button type="button" class="ptz-arrow" data-pan="0" data-tilt="0.5" aria-label="Tilt up">↑</button>
+            <div class="ptz-row">
+              <button type="button" class="ptz-arrow" data-pan="0.5" data-tilt="0" aria-label="Pan left">←</button>
+              <button type="button" class="ptz-stop" id="ptz-stop" aria-label="Stop">◉</button>
+              <button type="button" class="ptz-arrow" data-pan="-0.5" data-tilt="0" aria-label="Pan right">→</button>
+            </div>
+            <button type="button" class="ptz-arrow" data-pan="0" data-tilt="-0.5" aria-label="Tilt down">↓</button>
           </div>
-          <button type="button" class="ptz-arrow" data-pan="0" data-tilt="-0.5">↓</button>
-        </div>
-        <div class="ptz-zoom">
-          <button type="button" class="ptz-zoom-btn" data-zoom="0.5">＋ Zoom In</button>
-          <button type="button" class="ptz-zoom-btn" data-zoom="-0.5">－ Zoom Out</button>
+          <div class="ptz-zoom">
+            <button type="button" class="ptz-zoom-btn" data-zoom="0.5">＋ Zoom In</button>
+            <button type="button" class="ptz-zoom-btn" data-zoom="-0.5">－ Zoom Out</button>
+          </div>
         </div>
       </details>
     </section>
 
-    <section class="card" id="status-region">
+    <section class="card streaming-only" id="status-region">
       <h2>Status</h2>
       <p class="state state-idle">IDLE</p>
       <pre class="logs"></pre>
     </section>
   </main>
 
+  <!-- Sticky bottom action bar. CSS picks which buttons are visible by state.
+       Start is wired via `form=` so it still submits the (DOM-elsewhere) form. -->
+  <nav class="action-bar" aria-label="Stream actions">
+    <button type="submit" form="start-form" id="start-btn" class="action-primary">▶ Start Stream</button>
+    <button type="button" id="mute-btn"
+            hx-post="/api/mute" hx-vals='{"muted": true}' hx-swap="none">🔇 Mute</button>
+    <button type="button" id="unmute-btn"
+            hx-post="/api/mute" hx-vals='{"muted": false}' hx-swap="none">🔊 Unmute</button>
+    <button type="button" id="sacrament-btn" class="action-primary"
+            hx-post="/api/sacrament" hx-vals='{"enabled": true}' hx-swap="none">Sacrament</button>
+    <button type="button" id="exit-sacrament-btn" class="action-primary"
+            hx-post="/api/sacrament" hx-vals='{"enabled": false}' hx-swap="none">↩ Exit Sacrament</button>
+    <button type="button" id="stop-btn"
+            hx-post="/api/stop" hx-swap="none">■ Stop</button>
+  </nav>
+
   <footer class="site-footer">
     Contact the Stake Technology Specialist for training or issues
   </footer>
+
+  <!-- =========================================================================
+       Mock backend (dev only). Activated by adding `?mock=1` to the URL.
+       Fakes all /api endpoints and simulates the state machine so we can
+       iterate on the UI without a real camera or YouTube stream.
+       ===================================================================== -->
+  <script>
+    (function () {
+      const params = new URLSearchParams(location.search);
+      if (params.get("mock") !== "1") return;
+
+      // ---- Mock state -------------------------------------------------------
+      // The mocked backend is a small state machine mirroring the real one.
+      // `state` transitions on button clicks (Start / Stop) with realistic
+      // latency; the /api/status endpoint reads directly from this object.
+      const mock = {
+        state: "IDLE",
+        started_at: null,
+        muted: false,
+        sacrament: false,
+        source: "UHD CAMERA (NDI HX3, 192.168.110.9)",
+        ward: {{ (config.stream.active_ward or "")|tojson }},
+        quality: {{ (config.stream.quality or "high")|tojson }},
+        default_preset: {{ (config.ptz.default_preset or "")|tojson }},
+        presets: {{ config.ptz.presets|map(attribute='name')|list|tojson }},
+        preset_slots: {{ config.ptz.presets|map(attribute='slot')|list|tojson }},
+        last_preset_recall: null,
+      };
+      // Visible banner so it's obvious you're in mock mode. Uses normal
+      // flow (not position:fixed) so the real page header underneath stays
+      // fully readable — this is a dev indicator, not a persistent chrome.
+      const banner = document.createElement("div");
+      banner.textContent = "🧪 Mock mode — /api is faked, no real stream will start";
+      banner.style.cssText = [
+        "background:#f59e0b","color:#111","font:600 12px/1.4 system-ui",
+        "text-align:center","padding:4px 8px","letter-spacing:0.02em",
+      ].join(";");
+      document.addEventListener("DOMContentLoaded", () => document.body.prepend(banner));
+
+      // ---- Endpoint responders ---------------------------------------------
+      async function fakePreviewBlob() {
+        const c = document.createElement("canvas");
+        c.width = 1280; c.height = 720;
+        const ctx = c.getContext("2d");
+        const grad = ctx.createLinearGradient(0, 0, 0, 720);
+        grad.addColorStop(0, "#1f2937"); grad.addColorStop(1, "#0b1220");
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, 1280, 720);
+        // Overlay a subtle grid so it looks vaguely like framing lines.
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.15)"; ctx.lineWidth = 2;
+        for (let x = 0; x <= 1280; x += 160) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 720); ctx.stroke(); }
+        for (let y = 0; y <= 720; y += 90)  { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1280, y); ctx.stroke(); }
+        ctx.fillStyle = "#e2e8f0"; ctx.font = "bold 64px system-ui";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("MOCK PREVIEW", 640, 320);
+        ctx.font = "24px system-ui"; ctx.fillStyle = "#94a3b8";
+        ctx.fillText(mock.source, 640, 380);
+        if (mock.last_preset_recall) {
+          ctx.font = "22px system-ui"; ctx.fillStyle = "#a5f3fc";
+          ctx.fillText("→ " + mock.last_preset_recall, 640, 440);
+        }
+        return new Promise(r => c.toBlob(b => r(b), "image/jpeg", 0.85));
+      }
+
+      function statusPayload() {
+        const uptime = mock.started_at
+          ? Math.max(0, Math.floor((Date.now() - mock.started_at) / 1000))
+          : 0;
+        const logs = [];
+        if (mock.state === "STARTING") logs.push("[mock] spawning ndi-streamer…", "[mock] connecting to " + mock.source);
+        if (mock.state === "STREAMING") {
+          logs.push("[mock] connected to " + mock.source);
+          logs.push("[mock] Output #0, flv, to 'rtmp://a.rtmp.youtube.com/live2/…'");
+          const frames = 30 * uptime;
+          logs.push(`[mock] frames=${frames} fps=30.0 bitrate=6010kbps`);
+          if (mock.muted) logs.push("[mock] audio: muted");
+          if (mock.sacrament) logs.push("[mock] sacrament image active");
+        }
+        if (mock.state === "STOPPING") logs.push("[mock] SIGTERM sent, draining muxer");
+        return {
+          state: mock.state,
+          uptime_s: uptime,
+          last_error: null,
+          muted: mock.muted,
+          sacrament_mode: mock.sacrament,
+          log_tail: logs,
+          cpu_temp_c: 62.4,
+        };
+      }
+
+      function ptzInfoPayload() {
+        return {
+          supported: true,
+          connected: true,
+          source: mock.source,
+          presets: mock.presets.map((name, i) => ({ name, slot: mock.preset_slots[i] })),
+          recall_speed: 0.1,
+          move_speed: 0.2,
+          default_preset: mock.default_preset,
+        };
+      }
+
+      async function handle(url, method, formBody) {
+        const u = String(url);
+        method = (method || "GET").toUpperCase();
+        if (u.startsWith("/api/status"))    return { status: 200, json: statusPayload() };
+        if (u.startsWith("/api/ptz/info"))  return { status: 200, json: ptzInfoPayload() };
+        if (u.startsWith("/api/preview.jpg")) return { status: 200, blob: await fakePreviewBlob(), contentType: "image/jpeg" };
+        if (u.startsWith("/api/sources"))   return { status: 200, json: [{ name: mock.source, address: "192.168.110.9" }] };
+        if (u.startsWith("/api/start") && method === "POST") {
+          if (mock.state !== "IDLE" && mock.state !== "ERROR") return { status: 409, json: { detail: "stream already running" } };
+          mock.state = "STARTING";
+          setTimeout(() => { mock.state = "STREAMING"; mock.started_at = Date.now(); }, 1500);
+          return { status: 200, json: { ok: true } };
+        }
+        if (u.startsWith("/api/stop") && method === "POST") {
+          mock.state = "STOPPING";
+          setTimeout(() => { mock.state = "IDLE"; mock.started_at = null; mock.muted = false; mock.sacrament = false; mock.last_preset_recall = null; }, 1000);
+          return { status: 200, json: { ok: true } };
+        }
+        if (u.startsWith("/api/mute") && method === "POST") {
+          mock.muted = (formBody && formBody.get("muted")) === "true";
+          return { status: 200, json: { ok: true, muted: mock.muted } };
+        }
+        if (u.startsWith("/api/sacrament") && method === "POST") {
+          mock.sacrament = (formBody && formBody.get("enabled")) === "true";
+          if (mock.sacrament) mock.muted = true;
+          return { status: 200, json: { ok: true, sacrament_mode: mock.sacrament } };
+        }
+        if (u.match(/^\/api\/ptz\/preset\/(\d+)/) && method === "POST") {
+          const slot = Number(u.match(/^\/api\/ptz\/preset\/(\d+)/)[1]);
+          const idx = mock.preset_slots.indexOf(slot);
+          if (idx >= 0) mock.last_preset_recall = mock.presets[idx];
+          return { status: 200, json: { ok: true } };
+        }
+        if (u.startsWith("/api/ptz/pan_tilt") || u.startsWith("/api/ptz/zoom") || u.startsWith("/api/ptz/stop")) {
+          return { status: 200, json: { ok: true } };
+        }
+        if (u.startsWith("/api/config") && method === "POST") {
+          if (formBody) {
+            if (formBody.has("active_ward")) mock.ward = formBody.get("active_ward");
+            if (formBody.has("quality"))     mock.quality = formBody.get("quality");
+            if (formBody.has("default_preset")) mock.default_preset = formBody.get("default_preset");
+          }
+          return { status: 200, json: { ok: true } };
+        }
+        return null; // fall through to real fetch
+      }
+
+      // ---- fetch() shim -----------------------------------------------------
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const url = typeof input === "string" ? input : input.url;
+        const method = (init && init.method) || (typeof input === "object" && input.method) || "GET";
+        let body = init && init.body;
+        if (body instanceof URLSearchParams) { /* already fine */ }
+        else if (typeof body === "string")   { body = new URLSearchParams(body); }
+        else                                  { body = null; }
+        const r = await handle(url, method, body);
+        if (r === null) return origFetch(input, init);
+        if (r.blob) return new Response(r.blob, { status: r.status, headers: { "Content-Type": r.contentType } });
+        return new Response(JSON.stringify(r.json), { status: r.status, headers: { "Content-Type": "application/json" } });
+      };
+
+      // ---- XHR shim (htmx uses XHR, not fetch) -----------------------------
+      const OrigXHR = window.XMLHttpRequest;
+      window.XMLHttpRequest = function () {
+        const xhr = new OrigXHR();
+        const origOpen = xhr.open.bind(xhr);
+        const origSend = xhr.send.bind(xhr);
+        let _url = "", _method = "GET";
+        xhr.open = function (method, url, ...rest) {
+          _url = String(url); _method = String(method).toUpperCase();
+          return origOpen(method, url, ...rest);
+        };
+        xhr.send = function (body) {
+          if (!_url.startsWith("/api/")) return origSend(body);
+          let form = null;
+          if (body instanceof URLSearchParams) form = body;
+          else if (typeof body === "string" && body) form = new URLSearchParams(body);
+          handle(_url, _method, form).then(r => {
+            if (r === null) return origSend(body);
+            const text = r.json ? JSON.stringify(r.json) : "";
+            Object.defineProperty(xhr, "status", { value: r.status, configurable: true });
+            Object.defineProperty(xhr, "statusText", { value: "OK", configurable: true });
+            Object.defineProperty(xhr, "responseText", { value: text, configurable: true });
+            Object.defineProperty(xhr, "response",     { value: text, configurable: true });
+            Object.defineProperty(xhr, "readyState",   { value: 4, configurable: true });
+            xhr.dispatchEvent(new Event("readystatechange"));
+            xhr.dispatchEvent(new Event("load"));
+            xhr.dispatchEvent(new Event("loadend"));
+          });
+        };
+        return xhr;
+      };
+    })();
+  </script>
 
   <script>
     // ---- Flash banner -----------------------------------------------------
@@ -140,12 +378,6 @@
     });
 
     // ---- Optimistic-ish dataset updates --------------------------------
-    // The /api/status poll is on a 2s cadence; without these, clicking
-    // Mute or Sacrament leaves the button in the wrong visible state
-    // until the next poll lands. Both endpoints echo the new flag in
-    // their JSON response, so update data-muted / data-sacrament
-    // immediately on a successful response. /api/status will overwrite
-    // with the authoritative value on the next tick.
     document.body.addEventListener("htmx:afterRequest", (evt) => {
       if (!evt.detail?.successful) return;
       const path = evt.detail.pathInfo?.requestPath;
@@ -160,11 +392,30 @@
       } catch (_) { /* ignore */ }
     });
 
-    // Render status JSON into the status region.
-    // Strategy: rebuild the visible state header each tick, but for the
-    // logs <pre>, only refresh content if it changed AND preserve the
-    // operator's scroll position. Auto-scroll to the bottom only if they
-    // were already at the bottom (the "tail -f" pattern).
+    // ---- Auto-recall default preset on Start success ---------------------
+    // As soon as the stream comes up, tell the camera to snap to the ward's
+    // preferred starting preset. This lands during YouTube's "Preparing
+    // stream" window, so viewers get a good framing on first frame instead
+    // of whatever the camera was pointed at previously.
+    document.body.addEventListener("htmx:afterRequest", async (evt) => {
+      if (!evt.detail?.successful) return;
+      const path = evt.detail.pathInfo?.requestPath;
+      if (path !== "/api/start") return;
+      const sel = document.getElementById("default-preset-select");
+      const name = sel ? sel.value : "";
+      if (!name) return;
+      try {
+        const r = await fetch("/api/ptz/info");
+        if (!r.ok) return;
+        const info = await r.json();
+        const match = (info.presets || []).find(p => p.name === name);
+        if (!match) return;
+        const body = new URLSearchParams({ speed: String(info.recall_speed ?? 0.1) });
+        await fetch(`/api/ptz/preset/${match.slot}`, { method: "POST", body });
+      } catch (_) { /* nothing operator-visible if this fails */ }
+    });
+
+    // Render status JSON into the status region and update the chip uptime.
     document.body.addEventListener("htmx:afterRequest", (evt) => {
       if (!evt.detail.xhr || evt.detail.pathInfo?.requestPath !== "/api/status") return;
       const region = document.getElementById("status-region");
@@ -175,7 +426,14 @@
         document.body.dataset.muted = data.muted ? "true" : "false";
         document.body.dataset.sacrament = data.sacrament_mode ? "true" : "false";
 
-        // Build the new log text (plain text, escaping handled by textContent).
+        // Mirror the live uptime into the streaming-page chip.
+        const chipUptime = document.querySelector(".chip-uptime");
+        if (chipUptime) {
+          chipUptime.textContent = data.state === "STREAMING"
+            ? formatUptime(data.uptime_s)
+            : data.state;
+        }
+
         const newLogText = (data.log_tail || []).join("\n");
 
         let logsEl = region.querySelector(".logs");
@@ -184,11 +442,7 @@
           : true;
         const savedScrollTop = logsEl ? logsEl.scrollTop : 0;
 
-        // Replace the state header (state + optional uptime + optional error).
-        // We rebuild only the header parts, not the logs, so scroll is preserved.
-        // Pi CPU temperature chip. /api/status returns null on macOS dev
-        // (no /sys/class/thermal). Colour-coded so the operator can glance
-        // at it without parsing a number: cool < 70, warm 70-80, hot > 80.
+        // Pi CPU temperature chip. /api/status returns null on macOS dev.
         const t = data.cpu_temp_c;
         const tempCls = t == null ? '' : t > 80 ? 'temp-hot' : t > 70 ? 'temp-warm' : 'temp-cool';
         const tempHTML = t == null ? '' :
@@ -203,10 +457,8 @@
           ${data.last_error ? `<p class="err">${escapeHtml(data.last_error)}</p>` : ''}
         `;
 
-        // Remove existing header siblings of .logs, keep the <pre>.
         const oldHeader = Array.from(region.children).filter(el => el !== logsEl);
         for (const el of oldHeader) el.remove();
-        // Insert the new header before the logs <pre>.
         if (!logsEl) {
           logsEl = document.createElement("pre");
           logsEl.className = "logs";
@@ -214,7 +466,6 @@
         }
         logsEl.insertAdjacentHTML("beforebegin", headerHTML);
 
-        // Update logs text only if it actually changed (avoids needless reflow).
         if (logsEl.textContent !== newLogText) {
           logsEl.textContent = newLogText;
           if (wasAtBottom) {
@@ -253,9 +504,6 @@
     });
 
     // ---- PTZ ---------------------------------------------------------------
-    // Poll /api/ptz/info on a slower cadence than /api/status. Show/hide the
-    // PTZ card and render the preset grid based on the response.
-
     async function postForm(url, fields = {}) {
       const body = new URLSearchParams();
       for (const [k, v] of Object.entries(fields)) body.append(k, String(v));
@@ -293,14 +541,10 @@
     fetchPtzInfo();
     setInterval(fetchPtzInfo, 10000);
 
-    // Preview: pull a JPEG snapshot at ~5 fps. We chain (request next only
-    // after the previous resolves) so a slow snapshot endpoint doesn't pile
-    // up overlapping fetches.
+    // Preview: pull a JPEG snapshot at ~5 fps.
     const previewImg = document.getElementById("ptz-preview");
     async function refreshPreview() {
-      // Cheap cache-buster forces the browser to actually re-fetch.
       const url = `/api/preview.jpg?t=${Date.now()}`;
-      // Load via fetch so we can detect 503 (no frame yet) gracefully.
       try {
         const r = await fetch(url);
         if (r.ok) {
@@ -329,8 +573,7 @@
       postForm(`/api/ptz/preset/${slot}`, { speed });
     });
 
-    // D-pad press-and-hold pattern. Send command on mousedown/touchstart,
-    // send stop on release / pointer leave. NDI's pan_tilt is continuous.
+    // D-pad press-and-hold.
     function bindHoldButton(btn, onPress, onRelease) {
       const start = (e) => { e.preventDefault(); onPress(); };
       const end   = (e) => { e.preventDefault(); onRelease(); };

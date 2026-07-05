@@ -20,3 +20,6 @@ uv.lock
 # Dev artifacts
 .DS_Store
 *.log
+.ui-iter/
+.playwright-mcp/
+.superpowers/

@@ -1,48 +1,175 @@
+/* -------------------------------------------------------------------------
+ * NDI → YouTube Relay — operator UI
+ *
+ * Mobile-first single-column layout that scales to desktop. The DOM order is
+ * Configure → PTZ → Status, but the visual layout reshuffles by streamer
+ * state:
+ *   - IDLE/ERROR  → Configure form is the primary thing on screen.
+ *   - STREAMING   → Configure collapses to a one-line chip; PTZ is the
+ *                   primary thing on screen; the sticky bottom action bar
+ *                   carries Mute / Sacrament / Stop within thumb reach.
+ *
+ * State is signalled by `body[data-state="…"]`, updated by the /api/status
+ * poll. Mute and sacrament are signalled by `data-muted` / `data-sacrament`
+ * the same way. All visibility toggles live in CSS so JS only needs to
+ * update the attribute — no per-element show/hide branching in script.
+ * ----------------------------------------------------------------------- */
+
 * { box-sizing: border-box; }
+/* HTML `hidden` is an authoritative "off" — beat any later `display: grid` /
+   `display: block` rule that would otherwise un-hide the element. */
+[hidden] { display: none !important; }
+
+:root {
+  --bg:        #0f1115;
+  --surface:   #1a1d23;
+  --surface-2: #0a0c10;
+  --border:    #2a2e36;
+  --text:      #e8eaed;
+  --muted:     #9aa0a6;
+  --primary:   #2563eb;
+  --primary-2: #1d4ed8;
+  --danger:    #b91c1c;
+  --danger-2:  #991b1b;
+  --purple:    #7c3aed;
+  --purple-2:  #6d28d9;
+  --warning:   #ca8a04;
+  --warning-2: #a16207;
+  --slate:     #1e293b;
+  --slate-2:   #334155;
+  --slate-3:   #475569;
+  /* Reserve room at the bottom of the page for the sticky action bar so the
+     last card never hides under it. Falls back gracefully when the bar isn't
+     rendered (e.g., older browsers).  */
+  --action-bar-h: calc(76px + env(safe-area-inset-bottom, 0px));
+}
+
 body {
   font-family: system-ui, -apple-system, sans-serif;
-  margin: 0; background: #0f1115; color: #e8eaed;
+  margin: 0; background: var(--bg); color: var(--text);
+  padding-bottom: var(--action-bar-h);
 }
+
 header {
+  position: sticky; top: 0; z-index: 20;
   display: flex; justify-content: space-between; align-items: center;
-  padding: 1rem 1.5rem; background: #1a1d23; border-bottom: 1px solid #2a2e36;
+  padding: 0.75rem 1rem; background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
-header h1 { margin: 0; font-size: 1.2rem; }
-main { max-width: 720px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1rem; }
+header h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+#state-badge { font-size: 0.8rem; color: var(--muted); }
+
+main {
+  max-width: 960px;
+  margin: 1rem auto;
+  padding: 0 0.75rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
 .card {
-  background: #1a1d23; border: 1px solid #2a2e36; border-radius: 8px;
-  padding: 1.25rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 1rem;
 }
-.card h2 { margin-top: 0; font-size: 1rem; color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.04em; }
+.card h2 {
+  margin-top: 0; margin-bottom: 0.6rem;
+  font-size: 0.78rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+}
+
+/* -------------------------------------------------------------------------
+ * Two-page split
+ *
+ * The UI is really two distinct pages sharing one URL:
+ *   - Setup page      → visible when IDLE or ERROR
+ *   - Streaming page  → visible when STARTING / STREAMING / STOPPING
+ *
+ * Any element tagged `.setup-only` or `.streaming-only` is toggled by state.
+ * Sections in the OFF state are fully removed (display:none) so they don't
+ * consume grid space, run polling, or trap focus.
+ * ----------------------------------------------------------------------- */
+body[data-state="STARTING"]  .setup-only,
+body[data-state="STREAMING"] .setup-only,
+body[data-state="STOPPING"]  .setup-only { display: none !important; }
+
+body[data-state="IDLE"]  .streaming-only,
+body[data-state="ERROR"] .streaming-only { display: none !important; }
+
+/* Streaming-page chip: full-width status bar with a live pulse dot on the
+   left and the uptime timer on the right. Not a card — sits flush against
+   the main gutter to feel like part of the header. */
+.stream-chip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.95rem;
+}
+.chip-line { display: flex; align-items: center; gap: 0.5rem; min-width: 0; overflow: hidden; }
+.chip-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6);
+  animation: chipPulse 1.8s ease-out infinite;
+  flex-shrink: 0;
+}
+@keyframes chipPulse {
+  0%   { box-shadow: 0 0 0 0    rgba(74, 222, 128, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(74, 222, 128, 0);    }
+  100% { box-shadow: 0 0 0 0    rgba(74, 222, 128, 0);    }
+}
+/* Amber pulse during transitions; no pulse while stopping. */
+body[data-state="STARTING"] .chip-dot { background: #fbbf24; box-shadow: 0 0 0 0 rgba(251,191,36,0.55); animation-name: chipPulseAmber; }
+body[data-state="STOPPING"] .chip-dot { background: #9aa0a6; animation: none; }
+@keyframes chipPulseAmber {
+  0%   { box-shadow: 0 0 0 0    rgba(251, 191, 36, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(251, 191, 36, 0);    }
+  100% { box-shadow: 0 0 0 0    rgba(251, 191, 36, 0);    }
+}
+.chip-sep { color: var(--muted); }
+.chip-ward { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip-quality { color: var(--muted); text-transform: capitalize; }
+.chip-uptime {
+  color: #4ade80;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
 label { display: block; margin-bottom: 0.85rem; font-size: 0.95rem; }
 input, select {
-  width: 100%; padding: 0.5rem 0.7rem; margin-top: 0.25rem;
-  background: #0f1115; border: 1px solid #2a2e36; border-radius: 4px;
-  color: #e8eaed; font: inherit;
+  width: 100%; padding: 0.65rem 0.7rem; margin-top: 0.3rem;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font: inherit;
+  min-height: 44px;
 }
-.masked-row { display: flex; gap: 0.5rem; }
-.masked-row input { flex: 1; }
-fieldset { border: 1px solid #2a2e36; border-radius: 4px; padding: 0.5rem 0.75rem; margin-bottom: 0.85rem; }
-fieldset legend { padding: 0 0.4rem; color: #9aa0a6; font-size: 0.85rem; }
-fieldset label { display: inline-block; margin-right: 1rem; }
-button {
-  background: #2563eb; color: white; border: 0; padding: 0.6rem 1.2rem;
-  border-radius: 4px; font: inherit; cursor: pointer;
+
+/* Quality picker — pill-style radios, easier to tap than tiny radio dots. */
+fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.75rem; margin: 0 0 0.85rem; }
+fieldset legend { padding: 0 0.4rem; color: var(--muted); font-size: 0.85rem; }
+.quality-pill {
+  display: inline-flex; align-items: center;
+  gap: 0.35rem;
+  margin: 0.25rem 0.5rem 0.25rem 0;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  cursor: pointer; user-select: none;
+  text-transform: capitalize;
 }
-button:hover { background: #1d4ed8; }
-#stop-btn { background: #b91c1c; }
-#stop-btn:hover { background: #991b1b; }
-.actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-.state { font-size: 1.4rem; font-weight: 600; margin: 0.5rem 0; }
-.state-idle { color: #9aa0a6; }
+.quality-pill input { width: auto; min-height: 0; margin: 0; accent-color: var(--primary); }
+.quality-pill:has(input:checked) { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* State chips/badges */
+.state { font-size: 1.4rem; font-weight: 600; margin: 0.25rem 0 0.5rem; }
+.state-idle { color: var(--muted); }
 .state-starting, .state-stopping { color: #fbbf24; }
 .state-streaming { color: #4ade80; }
 .state-error { color: #f87171; }
-.state small { font-size: 0.85rem; color: #9aa0a6; margin-left: 0.5rem; }
-.err { color: #f87171; background: #2a1818; padding: 0.5rem 0.75rem; border-radius: 4px; }
+.state small { font-size: 0.85rem; color: var(--muted); margin-left: 0.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.err { color: #f87171; background: #2a1818; padding: 0.5rem 0.75rem; border-radius: 6px; }
 
-/* Pi CPU temperature chip. Three tiers: cool / warm / hot. Hidden by
-   templating when /sys/class/thermal isn't available (e.g., macOS dev). */
 .temp {
   display: inline-block;
   font-size: 0.85rem;
@@ -54,42 +181,223 @@ button:hover { background: #1d4ed8; }
 .temp-cool { color: #86efac; background: #0a2517; }
 .temp-warm { color: #fde68a; background: #2a2010; }
 .temp-hot  { color: #fca5a5; background: #2a1414; }
-/* "(max 80°C)" label inside the chip — same colour family, less prominent. */
 .temp small { font-size: 0.78em; opacity: 0.7; margin-left: 0.4em; }
 
-/* Flash banner for API errors. Sits below the page header so it's the
-   first thing the operator sees when an action fails. Auto-dismissed by
-   JS after a few seconds. */
+/* -------------------------------------------------------------------------
+ * Flash banner — surfaced over content, animated in from header.
+ * ----------------------------------------------------------------------- */
 .flash {
-  margin: 0.75rem auto;
-  max-width: 36rem;
+  position: sticky; top: 56px; z-index: 15;
+  margin: 0.5rem 0.75rem 0;
   padding: 0.75rem 1rem;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 0.95rem;
   line-height: 1.4;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
 }
 .flash[hidden] { display: none; }
-.flash-error { color: #fee; background: #7f1d1d; border: 1px solid #b91c1c; }
+.flash-error { color: #fee; background: var(--danger); border: 1px solid var(--danger-2); }
+
+/* -------------------------------------------------------------------------
+ * PTZ card — preview + presets + manual
+ * ----------------------------------------------------------------------- */
+#ptz-card h2 small { color: var(--muted); font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 0.4rem; }
+
+.ptz-preview-wrap {
+  position: relative;
+  margin: 0 0 0.85rem;
+  border-radius: 8px; overflow: hidden;
+  background: #000;
+  /* 16:9 keeps the preview large on mobile without arbitrary px caps. */
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border);
+}
+.ptz-preview {
+  display: block;
+  width: 100%; height: 100%;
+  object-fit: contain;
+}
+.ptz-preview-placeholder {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+/* Placeholder hides once a real preview frame has rendered. */
+.ptz-preview:not([hidden]) ~ .ptz-preview-placeholder { display: none; }
+
+.sacrament-overlay {
+  display: none;
+  position: absolute; inset: 0;
+  align-items: center; justify-content: center;
+  background: rgba(124, 58, 237, 0.78);
+  color: #fff; font-weight: 700; letter-spacing: 0.15em;
+  font-size: clamp(1.4rem, 5vw, 2.5rem);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+body[data-sacrament="true"] .sacrament-overlay { display: flex; }
+
+/* Preset grid: 2 columns on phones, more as space allows. The buttons are
+   large tap targets (≥56px tall) since these are the main operator action
+   during a meeting. */
+.presets-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, 1fr);
+  margin: 0 0 0.75rem;
+}
+@media (min-width: 480px) { .presets-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 720px) { .presets-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
+
+.preset-btn {
+  background: var(--slate); color: var(--text);
+  padding: 1rem 0.6rem;
+  min-height: 56px;
+  font-size: 1rem; font-weight: 500;
+  border-radius: 8px; border: 1px solid var(--slate-2);
+  cursor: pointer; transition: transform 0.05s, background 0.1s;
+}
+.preset-btn:hover { background: var(--slate-2); }
+.preset-btn:active { transform: scale(0.97); background: var(--slate-3); }
+
+/* Manual control: collapsed by default; expands to a full d-pad + zoom. */
+.ptz-manual { margin-top: 0.25rem; }
+.ptz-manual summary {
+  color: var(--muted); font-size: 0.9rem; cursor: pointer;
+  padding: 0.5rem 0.25rem;
+  user-select: none;
+  list-style: none;
+}
+.ptz-manual summary::before { content: "▸ "; display: inline-block; transition: transform 0.15s; }
+.ptz-manual[open] summary::before { transform: rotate(90deg); }
+
+.ptz-manual-body {
+  display: flex; flex-wrap: wrap; gap: 1rem;
+  justify-content: space-around; align-items: center;
+  padding: 0.75rem 0 0.25rem;
+}
+.ptz-pad {
+  display: flex; flex-direction: column; align-items: center; gap: 0.4rem;
+}
+.ptz-row { display: flex; gap: 0.4rem; }
+.ptz-arrow, .ptz-stop, .ptz-zoom-btn {
+  background: var(--slate); color: var(--text); border: 1px solid var(--slate-2);
+  width: 4rem; height: 4rem;
+  border-radius: 10px; font-size: 1.4rem;
+  cursor: pointer; user-select: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; line-height: 1;
+  touch-action: manipulation;
+}
+.ptz-stop { background: var(--slate-2); color: var(--muted); }
+.ptz-arrow:active, .ptz-zoom-btn:active { background: var(--slate-3); }
+.ptz-zoom {
+  display: flex; flex-direction: column; gap: 0.4rem;
+}
+.ptz-zoom-btn {
+  width: auto;
+  height: 3rem;
+  min-height: 48px;
+  padding: 0 1rem;
+  font-size: 0.9rem;
+}
+
+/* -------------------------------------------------------------------------
+ * Status / logs
+ * ----------------------------------------------------------------------- */
 .logs {
-  background: #0a0c10; padding: 0.6rem 0.8rem; border-radius: 4px;
-  font-size: 0.8rem; line-height: 1.4; max-height: 280px; overflow-y: auto;
-  border: 1px solid #2a2e36; color: #c9ccd1; white-space: pre-wrap;
+  background: var(--surface-2);
+  padding: 0.6rem 0.8rem; border-radius: 6px;
+  font-size: 0.78rem; line-height: 1.4;
+  max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); color: #c9ccd1;
+  white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .logs code { display: block; }
 
-/* Start/Stop toggle based on streamer state. Only one is visible at a time. */
-body[data-state="IDLE"] #stop-btn,
-body[data-state="ERROR"] #stop-btn { display: none; }
-body[data-state="STARTING"] #start-btn,
-body[data-state="STREAMING"] #start-btn,
-body[data-state="STOPPING"] #start-btn { display: none; }
+/* -------------------------------------------------------------------------
+ * Sticky bottom action bar
+ *
+ * Fixed to the bottom of the viewport so the operator can hit Mute /
+ * Sacrament / Stop with one thumb regardless of scroll position. The CSS
+ * decides which buttons are visible by state so the bar always shows a
+ * sensible set:
+ *   - IDLE/ERROR  → Start
+ *   - STREAMING (no sacrament, not muted)  → Mute · Sacrament · Stop
+ *   - STREAMING (no sacrament, muted)      → Unmute · Sacrament · Stop
+ *   - STREAMING (sacrament)                → Exit Sacrament · Stop
+ *
+ * STARTING / STOPPING show Stop only (disabled while STOPPING).
+ * ----------------------------------------------------------------------- */
+.action-bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0; z-index: 30;
+  background: rgba(15, 17, 21, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  display: flex; gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  /* On wide screens, keep buttons from sprawling across the entire viewport:
+     center the row and cap it at the main content width. Mobile keeps the
+     full-edge bar because thumbs reach the edges naturally. */
+  max-width: 960px;
+  margin: 0 auto;
+}
+.action-bar button {
+  flex: 1; min-width: 0;
+  min-height: 52px;
+  background: var(--slate);
+  color: var(--text);
+  border: 0; border-radius: 8px;
+  font: inherit; font-weight: 600; font-size: 1rem;
+  cursor: pointer;
+  padding: 0 0.5rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.action-bar button:hover { background: var(--slate-2); }
+.action-bar button:active { transform: scale(0.98); }
+
+/* The "primary" action of the current state gets the colored treatment.
+   Start = blue, Sacrament = purple. Always the leftmost visible button. */
+#start-btn { background: var(--primary); }
+#start-btn:hover { background: var(--primary-2); }
+
+#sacrament-btn, #exit-sacrament-btn { background: var(--purple); }
+#sacrament-btn:hover, #exit-sacrament-btn:hover { background: var(--purple-2); }
+
+#mute-btn { background: var(--slate-3); }
+#unmute-btn { background: var(--warning); }
+#unmute-btn:hover { background: var(--warning-2); }
+
+#stop-btn { background: var(--danger); }
+#stop-btn:hover { background: var(--danger-2); }
+
+/* State-driven visibility for the action bar buttons. Default: hide all. */
+.action-bar button { display: none; }
+
+body[data-state="IDLE"] #start-btn,
+body[data-state="ERROR"] #start-btn { display: inline-flex; }
+body[data-state="ERROR"] #start-btn::before { content: "↻ "; }
+
+body[data-state="STARTING"] #stop-btn,
+body[data-state="STREAMING"] #stop-btn,
+body[data-state="STOPPING"] #stop-btn { display: inline-flex; }
 body[data-state="STOPPING"] #stop-btn { opacity: 0.6; pointer-events: none; }
 
-/* Lock the camera and ward selectors while a stream is live (or
-   transitioning). Operators shouldn't be able to repoint the appliance
-   mid-meeting; to change either, hit Stop first. Quality stays
-   interactive — changing it only takes effect on the next Start. */
+body[data-state="STREAMING"][data-sacrament="false"][data-muted="false"] #mute-btn,
+body[data-state="STREAMING"][data-sacrament="false"][data-muted="true"]  #unmute-btn,
+body[data-state="STREAMING"][data-sacrament="false"] #sacrament-btn,
+body[data-state="STREAMING"][data-sacrament="true"]  #exit-sacrament-btn { display: inline-flex; }
+
+/* Setup form is fully hidden during streaming anyway, but keep the
+   selector-lock as belt-and-suspenders — cheap and rules out surprises
+   if someone unhides it via DevTools mid-stream. */
 body[data-state="STARTING"] select[name="source"],
 body[data-state="STREAMING"] select[name="source"],
 body[data-state="STOPPING"] select[name="source"],
@@ -100,97 +408,44 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   pointer-events: none;
   cursor: not-allowed;
 }
-body[data-state="ERROR"] #start-btn::before { content: "↻ "; }
 
-/* Mute/Unmute: only visible while actively streaming, and exactly one of
-   them at a time based on the current muted state. Hidden during sacrament
-   mode (sacrament implies muted; the toggle would just confuse). */
-#mute-btn, #unmute-btn { display: none; }
-body[data-state="STREAMING"][data-sacrament="false"][data-muted="false"] #mute-btn { display: inline-block; background: #475569; }
-body[data-state="STREAMING"][data-sacrament="false"][data-muted="true"] #unmute-btn { display: inline-block; background: #ca8a04; }
-#mute-btn:hover { background: #334155; }
-#unmute-btn:hover { background: #a16207; }
-
-/* Sacrament mode: enter from STREAMING (non-sacrament), exit back to STREAMING (sacrament). */
-#sacrament-btn, #exit-sacrament-btn { display: none; }
-body[data-state="STREAMING"][data-sacrament="false"] #sacrament-btn { display: inline-block; background: #7c3aed; }
-body[data-state="STREAMING"][data-sacrament="true"] #exit-sacrament-btn { display: inline-block; background: #7c3aed; }
-#sacrament-btn:hover, #exit-sacrament-btn:hover { background: #6d28d9; }
-
-/* PTZ card */
-#ptz-card h2 small { color: #9aa0a6; font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
-.ptz-preview {
-  display: block; width: 100%; max-height: 240px; object-fit: contain;
-  background: #000; border-radius: 4px;
-  border: 1px solid #2a2e36;
-}
-.ptz-preview-wrap { position: relative; margin-bottom: 0.75rem; }
-.sacrament-overlay {
-  display: none;
-  position: absolute; inset: 0;
-  align-items: center; justify-content: center;
-  background: rgba(124, 58, 237, 0.78);
-  color: #fff; font-weight: 700; letter-spacing: 0.15em;
-  font-size: clamp(1.4rem, 5vw, 2.5rem);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-  border-radius: 4px;
-  pointer-events: none;
-}
-body[data-sacrament="true"] .sacrament-overlay { display: flex; }
-.presets-grid {
-  display: grid; gap: 0.6rem; margin: 0.75rem 0 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-}
-.preset-btn {
-  background: #1e293b; color: #e8eaed; padding: 1rem 0.6rem;
-  font-size: 1rem; font-weight: 500; border-radius: 6px; border: 1px solid #334155;
-  cursor: pointer; transition: transform 0.05s, background 0.1s;
-}
-.preset-btn:hover { background: #334155; }
-.preset-btn:active { transform: scale(0.97); background: #475569; }
-
-.ptz-manual { margin-top: 0.5rem; }
-.ptz-manual summary {
-  color: #9aa0a6; font-size: 0.85rem; cursor: pointer; padding: 0.25rem 0;
-  user-select: none;
-}
-.ptz-pad {
-  display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
-  margin-top: 0.75rem;
-}
-.ptz-row { display: flex; gap: 0.3rem; }
-.ptz-arrow, .ptz-stop, .ptz-zoom-btn {
-  background: #1e293b; color: #e8eaed; border: 1px solid #334155;
-  width: 3rem; height: 3rem; border-radius: 6px; font-size: 1.2rem;
-  cursor: pointer; user-select: none;
-  /* Glyphs like ← ↑ → ↓ ◉ have varying intrinsic metrics; flex-centering
-     ignores baseline differences so they all sit dead-center in the box. */
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 0; line-height: 1;
-}
-.ptz-stop { background: #374151; color: #9aa0a6; }
-.ptz-arrow:active, .ptz-zoom-btn:active { background: #475569; }
-.ptz-zoom { display: flex; gap: 0.5rem; margin-top: 0.75rem; justify-content: center; }
-.ptz-zoom-btn { width: auto; padding: 0 1rem; font-size: 0.9rem; }
-
-/* Config-managed key picker hint */
 .hint {
-  display: block; color: #9aa0a6; font-size: 0.75rem; margin-top: 0.25rem;
+  display: block; color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem;
 }
 .hint code {
-  background: #0a0c10; padding: 1px 4px; border-radius: 3px;
+  background: var(--surface-2); padding: 1px 4px; border-radius: 3px;
   font-size: 0.75rem;
-}
-.code-sample {
-  background: #0a0c10; padding: 0.5rem 0.7rem; border-radius: 4px;
-  font-size: 0.75rem; color: #c9ccd1; margin: 0.5rem 0 0; overflow-x: auto;
-  border: 1px solid #2a2e36;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .site-footer {
   text-align: center;
-  padding: 1.5rem 1rem 2rem;
+  padding: 1rem 1rem 0.5rem;
   color: #6b7280;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+}
+
+/* -------------------------------------------------------------------------
+ * Desktop: side-by-side preview + presets when there's room.
+ *
+ * Two-column grid inside the PTZ card on wide screens. Mobile stays
+ * single-column because the preview is the operator's primary feedback and
+ * shouldn't be shrunk to fit beside something else.
+ * ----------------------------------------------------------------------- */
+@media (min-width: 820px) {
+  #ptz-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    column-gap: 1rem;
+    row-gap: 0.5rem;
+    grid-template-areas:
+      "title    title"
+      "preview  presets"
+      "manual   manual";
+    align-items: start;
+  }
+  #ptz-card > h2 { grid-area: title; }
+  #ptz-card > .ptz-preview-wrap { grid-area: preview; margin-bottom: 0; }
+  #ptz-card > #presets-grid { grid-area: presets; margin-bottom: 0; }
+  #ptz-card > .ptz-manual { grid-area: manual; margin-top: 0.5rem; }
+  #ptz-card > #presets-grid { grid-template-columns: repeat(2, 1fr); }
 }

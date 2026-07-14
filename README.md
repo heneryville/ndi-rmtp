@@ -48,8 +48,11 @@ separate low-bandwidth NDI receiver and serves JPEG snapshots over HTTP.
 - ✅ Sacrament-mode signal toggle: no RTMP reconnect, no "no data" gap
 - ✅ Multi-ward config with per-ward overlays
 - ✅ PTZ presets + d-pad + zoom + live preview pane
-- ⚠️ Raspberry Pi 5 deployment is **not yet validated**. `scripts/install.sh`
-  exists but has never run end-to-end on real hardware. See `TODO.md`.
+- ✅ Raspberry Pi 5 **install** validated end-to-end (Pi OS Lite arm64, Trixie):
+  `scripts/install.sh` builds `ndi-streamer`, installs the systemd service, and
+  serves the UI on port 80.
+- ⚠️ Live streaming *from the Pi* to YouTube not yet exercised — needs the PTZ
+  camera on the LAN. See `TODO.md`.
 
 ## Dev setup (Apple Silicon Mac)
 
@@ -70,7 +73,7 @@ The dev-setup script:
 Open <http://localhost:8080>. With auth disabled in `config.toml` (default
 for this repo's checked-in config) the page loads without a login.
 
-## Pi install (not yet validated)
+## Pi install
 
 ```sh
 sudo ./scripts/install.sh

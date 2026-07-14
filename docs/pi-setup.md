@@ -27,7 +27,8 @@ the IOMedia layer failed to enumerate. Re-seat the card.
 ## 2. Configure cloud-init (bootfs partition)
 
 After imaging, the boot partition mounts at `/Volumes/bootfs`. Three files
-matter — `user-data` (required), `network-config` (only if using wifi), and
+matter — `user-data` (required; also where we enable SSH, see below),
+`network-config` (only for wifi — a wired appliance needs none), and
 `meta-data` (only if re-editing after a previous boot).
 
 ### `/Volumes/bootfs/user-data`
@@ -50,17 +51,44 @@ ssh_pwauth: true
 
 packages:
 - avahi-daemon
+
+# Pi OS ships with the SSH server DISABLED. ssh_pwauth above only sets
+# PasswordAuthentication *inside* sshd's config — it does NOT start the
+# service. Enable + start it, generating host keys in case the service never
+# ran to create them:
+runcmd:
+- [ ssh-keygen, -A ]
+- [ systemctl, enable, --now, ssh ]
 ```
 
-### `/Volumes/bootfs/network-config` — wifi only
+> **SSH is disabled by default on Pi OS.** The `runcmd` above turns it on via
+> cloud-init. The classic headless switch also works and is independent of
+> cloud-init: create an empty file named `ssh` in the boot partition
+> (`touch /Volumes/bootfs/ssh`), which Pi OS's firstboot detects and uses to
+> enable the service. Doing both is harmless belt-and-suspenders. Without one
+> of these, the Pi boots and answers mDNS/ping but **refuses port 22** — the
+> exact symptom that cost us a card round-trip on the north build.
 
-Skip this section if the Pi will run on ethernet. For wifi, replace the
-shipped template:
+### `/Volumes/bootfs/network-config` — wired by default, wifi for the bench
+
+**Production appliances run on wired ethernet.** On Trixie the network renderer
+is NetworkManager, which auto-manages `eth0` with DHCP, so an ethernet-only box
+needs no `network-config` at all. Declaring `eth0` explicitly (below) is
+harmless and states intent — it comes up whenever a cable is present.
+
+**Wifi is for bench testing only.** Its password is stored in cleartext on the
+Pi (`/etc/netplan/90-NM-*.yaml` and `/etc/NetworkManager/system-connections/`),
+so don't ship an appliance carrying your home/lab wifi — strip it first (below).
+**Never commit wifi credentials to the repo.**
 
 ```yaml
 network:
   version: 2
-  wifis:
+  ethernets:
+    eth0:
+      dhcp4: true
+      optional: true
+  wifis:              # bench testing only — omit entirely for a wired appliance
     wlan0:
       dhcp4: true
       optional: true
@@ -73,6 +101,13 @@ network:
 **`regulatory-domain` is mandatory.** Without a country code the Pi 5's wifi
 radio firmware stays locked — the SSID won't even appear in scans. Use the
 ISO-3166 code for your country.
+
+**Strip bench wifi before deploy.** Once the appliance is on its wired network,
+delete the bench connection so the credentials don't travel with it:
+
+```sh
+sudo nmcli con delete netplan-wlan0-<SSID>   # e.g. netplan-wlan0-chele
+```
 
 ### `/Volumes/bootfs/meta-data` — only if you've already booted this card
 

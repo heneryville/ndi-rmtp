@@ -1,0 +1,762 @@
+############################################################
+# ndi-rmtp appliance fingerprint
+# host: snowspringsnorth   collected(uptime-rel): 2621.46s up
+############################################################
+
+========== OS / RELEASE ==========
+$ cat /etc/os-release
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+NAME="Debian GNU/Linux"
+VERSION_ID="13"
+VERSION="13 (trixie)"
+VERSION_CODENAME=trixie
+DEBIAN_VERSION_FULL=13.5
+ID=debian
+HOME_URL="https://www.debian.org/"
+SUPPORT_URL="https://www.debian.org/support"
+BUG_REPORT_URL="https://bugs.debian.org/"
+
+========== KERNEL / ARCH / PI MODEL / FIRMWARE ==========
+$ uname -srvm
+Linux 6.18.34+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.18.34-1+rpt1 (2026-06-09) aarch64
+$ tr -d '\0' < /proc/device-tree/model; echo
+Raspberry Pi 5 Model B Rev 1.1
+$ cat /proc/cpuinfo | grep -iE 'model name|Hardware|Revision|Model' | sort -u
+CPU revision	: 1
+Model		: Raspberry Pi 5 Model B Rev 1.1
+Revision	: c04171
+$ vcgencmd version
+2025/06/13 10:39:26 
+Copyright (c) 2012 Broadcom
+version 5855b10b (release) (embedded)
+$ vcgencmd get_config int 2>/dev/null | grep -iE 'arm|gpu|hevc|codec|h265|h264' || true
+arm_64bit=1
+arm_boost=1
+arm_freq=2400
+arm_freq_min=1500
+arm_peri_high=1
+gpu_freq_min=500
+hevc_freq=910
+hevc_freq_min=500
+mask_gpu_interrupt1=16418
+
+========== FFMPEG — version + FULL build config (decoder support lives here) ==========
+$ ffmpeg -hide_banner -version
+ffmpeg version 7.1.5-0+deb13u1+rpt1 Copyright (c) 2000-2026 the FFmpeg developers
+built with gcc 14 (Debian 14.2.0-19)
+configuration: --prefix=/usr --extra-version=0+deb13u1+rpt1 --toolchain=hardened --incdir=/usr/include/aarch64-linux-gnu --enable-gpl --disable-stripping --disable-libmfx --disable-mmal --disable-omx --enable-gnutls --enable-libaom --enable-libass --enable-libbs2b --enable-libcdio --enable-libcodec2 --enable-libdav1d --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgme --enable-libgsm --enable-libharfbuzz --enable-libmp3lame --enable-libmysofa --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-openal --enable-opencl --enable-opengl --disable-sndio --disable-libvpl --libdir=/usr/lib/aarch64-linux-gnu --arch=arm64 --enable-neon --enable-v4l2-request --enable-libudev --enable-epoxy --enable-libdc1394 --enable-libdrm --enable-libiec61883 --enable-vout-drm --enable-chromaprint --enable-frei0r --enable-ladspa --enable-libbluray --enable-libcaca --enable-libdvdnav --enable-libdvdread --enable-libjack --enable-libpulse --enable-librabbitmq --enable-librist --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libx264 --enable-libzmq --enable-libzvbi --enable-lv2 --enable-sand --enable-sdl2 --enable-libplacebo --enable-librav1e --enable-pocketsphinx --enable-librsvg --enable-libjxl --enable-shared
+libavutil      59. 39.100 / 59. 39.100
+libavcodec     61. 19.101 / 61. 19.101
+libavformat    61.  7.103 / 61.  7.103
+libavdevice    61.  3.100 / 61.  3.100
+libavfilter    10.  5.100 / 10.  5.100
+libswscale      8.  3.100 /  8.  3.100
+libswresample   5.  3.100 /  5.  3.100
+libpostproc    58.  3.100 / 58.  3.100
+$ ffmpeg -hide_banner -buildconf
+
+  configuration:
+    --prefix=/usr
+    --extra-version=0+deb13u1+rpt1
+    --toolchain=hardened
+    --incdir=/usr/include/aarch64-linux-gnu
+    --enable-gpl
+    --disable-stripping
+    --disable-libmfx
+    --disable-mmal
+    --disable-omx
+    --enable-gnutls
+    --enable-libaom
+    --enable-libass
+    --enable-libbs2b
+    --enable-libcdio
+    --enable-libcodec2
+    --enable-libdav1d
+    --enable-libflite
+    --enable-libfontconfig
+    --enable-libfreetype
+    --enable-libfribidi
+    --enable-libglslang
+    --enable-libgme
+    --enable-libgsm
+    --enable-libharfbuzz
+    --enable-libmp3lame
+    --enable-libmysofa
+    --enable-libopenjpeg
+    --enable-libopenmpt
+    --enable-libopus
+    --enable-librubberband
+    --enable-libshine
+    --enable-libsnappy
+    --enable-libsoxr
+    --enable-libspeex
+    --enable-libtheora
+    --enable-libtwolame
+    --enable-libvidstab
+    --enable-libvorbis
+    --enable-libvpx
+    --enable-libwebp
+    --enable-libx265
+    --enable-libxml2
+    --enable-libxvid
+    --enable-libzimg
+    --enable-openal
+    --enable-opencl
+    --enable-opengl
+    --disable-sndio
+    --disable-libvpl
+    --libdir=/usr/lib/aarch64-linux-gnu
+    --arch=arm64
+    --enable-neon
+    --enable-v4l2-request
+    --enable-libudev
+    --enable-epoxy
+    --enable-libdc1394
+    --enable-libdrm
+    --enable-libiec61883
+    --enable-vout-drm
+    --enable-chromaprint
+    --enable-frei0r
+    --enable-ladspa
+    --enable-libbluray
+    --enable-libcaca
+    --enable-libdvdnav
+    --enable-libdvdread
+    --enable-libjack
+    --enable-libpulse
+    --enable-librabbitmq
+    --enable-librist
+    --enable-libsrt
+    --enable-libssh
+    --enable-libsvtav1
+    --enable-libx264
+    --enable-libzmq
+    --enable-libzvbi
+    --enable-lv2
+    --enable-sand
+    --enable-sdl2
+    --enable-libplacebo
+    --enable-librav1e
+    --enable-pocketsphinx
+    --enable-librsvg
+    --enable-libjxl
+    --enable-shared
+
+========== FFMPEG / libav / codec PACKAGES (dpkg) ==========
+$ dpkg -l 2>/dev/null | grep -iE 'ffmpeg|libav|libsw|libx26|libde265|libheif|libvpx|libaom|libdav1d|gstreamer1.0-libav' | awk '{print $2, $3}' | sort
+ffmpeg 8:7.1.5-0+deb13u1+rpt1
+gstreamer1.0-libav:arm64 1.26.2-1
+libaom3:arm64 3.12.1-1
+libavahi-client3:arm64 0.8-16
+libavahi-client-dev:arm64 0.8-16
+libavahi-common3:arm64 0.8-16
+libavahi-common-data:arm64 0.8-16
+libavahi-common-dev:arm64 0.8-16
+libavahi-core7:arm64 0.8-16
+libavahi-glib1:arm64 0.8-16
+libavc1394-0:arm64 0.5.4-5+b2
+libavcodec61:arm64 8:7.1.5-0+deb13u1+rpt1
+libavcodec-dev:arm64 8:7.1.5-0+deb13u1+rpt1
+libavdevice61:arm64 8:7.1.5-0+deb13u1+rpt1
+libavfilter10:arm64 8:7.1.5-0+deb13u1+rpt1
+libavformat61:arm64 8:7.1.5-0+deb13u1+rpt1
+libavformat-dev:arm64 8:7.1.5-0+deb13u1+rpt1
+libavif16:arm64 1.2.1-1.2
+libavtp0:arm64 0.2.0-2
+libavutil59:arm64 8:7.1.5-0+deb13u1+rpt1
+libavutil-dev:arm64 8:7.1.5-0+deb13u1+rpt1
+libdav1d7:arm64 1.5.1-1
+libde265-0:arm64 1.0.15-1+b3
+libheif1:arm64 1.19.8-1
+libheif-plugin-dav1d:arm64 1.19.8-1
+libheif-plugin-libde265:arm64 1.19.8-1
+libpostproc58:arm64 8:7.1.5-0+deb13u1+rpt1
+libswresample5:arm64 8:7.1.5-0+deb13u1+rpt1
+libswresample-dev:arm64 8:7.1.5-0+deb13u1+rpt1
+libswscale8:arm64 8:7.1.5-0+deb13u1+rpt1
+libswscale-dev:arm64 8:7.1.5-0+deb13u1+rpt1
+libvpx9:arm64 1.15.0-2.1+deb13u1
+libx264-164:arm64 2:0.164.3108+git31e19f9-2+b1
+libx265-215:arm64 4.1-2
+python3-av 14.2.0-1
+
+========== HEVC / H.264 / AV1 DECODERS available to ffmpeg ==========
+$ ffmpeg -hide_banner -decoders 2>/dev/null | grep -iE ' hevc| h264| av1| vp9' | sort
+ V..... av1_cuvid            Nvidia CUVID AV1 decoder (codec av1)
+ V....D av1                  Alliance for Open Media AV1
+ V....D libaom-av1           libaom AV1 (codec av1)
+ VFS..D h264                 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10
+ VFS..D hevc                 HEVC (High Efficiency Video Coding)
+ VFS..D vp9                  Google VP9
+ V..... h264_cuvid           Nvidia CUVID H264 decoder (codec h264)
+ V..... h264_v4l2m2m         V4L2 mem2mem H.264 decoder wrapper (codec h264)
+ V..... hevc_cuvid           Nvidia CUVID HEVC decoder (codec hevc)
+ V..... hevc_v4l2m2m         V4L2 mem2mem HEVC decoder wrapper (codec hevc)
+ V..... libdav1d             dav1d AV1 decoder by VideoLAN (codec av1)
+ V..... libvpx-vp9           libvpx VP9 (codec vp9)
+ V..... vp9_cuvid            Nvidia CUVID VP9 decoder (codec vp9)
+ V..... vp9_v4l2m2m          V4L2 mem2mem VP9 decoder wrapper (codec vp9)
+
+========== HARDWARE VIDEO (V4L2 devices / codec nodes) ==========
+$ ls -la /dev/video* 2>/dev/null || echo '(no /dev/video*)'
+crw-rw----+ 1 root video 81, 16 Jul 16 17:15 /dev/video19
+crw-rw----+ 1 root video 81,  0 Jul 16 17:15 /dev/video20
+crw-rw----+ 1 root video 81,  1 Jul 16 17:15 /dev/video21
+crw-rw----+ 1 root video 81,  2 Jul 16 17:15 /dev/video22
+crw-rw----+ 1 root video 81,  3 Jul 16 17:15 /dev/video23
+crw-rw----+ 1 root video 81,  4 Jul 16 17:15 /dev/video24
+crw-rw----+ 1 root video 81,  5 Jul 16 17:15 /dev/video25
+crw-rw----+ 1 root video 81,  6 Jul 16 17:15 /dev/video26
+crw-rw----+ 1 root video 81,  7 Jul 16 17:15 /dev/video27
+crw-rw----+ 1 root video 81,  8 Jul 16 17:15 /dev/video28
+crw-rw----+ 1 root video 81,  9 Jul 16 17:15 /dev/video29
+crw-rw----+ 1 root video 81, 10 Jul 16 17:15 /dev/video30
+crw-rw----+ 1 root video 81, 11 Jul 16 17:15 /dev/video31
+crw-rw----+ 1 root video 81, 12 Jul 16 17:15 /dev/video32
+crw-rw----+ 1 root video 81, 13 Jul 16 17:15 /dev/video33
+crw-rw----+ 1 root video 81, 14 Jul 16 17:15 /dev/video34
+crw-rw----+ 1 root video 81, 15 Jul 16 17:15 /dev/video35
+$ for d in /dev/video*; do echo "-- $d"; v4l2-ctl -d "$d" --info 2>/dev/null | grep -iE 'Card type|Driver name'; done 2>/dev/null || echo '(v4l2-ctl n/a)'
+-- /dev/video19
+	Driver name      : rpi-hevc-dec
+	Card type        : rpi-hevc-dec
+	Driver name      : rpi-hevc-dec
+-- /dev/video20
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video21
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video22
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video23
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video24
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video25
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video26
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video27
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video28
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video29
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video30
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video31
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video32
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video33
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video34
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+-- /dev/video35
+	Driver name      : pispbe
+	Card type        : pispbe
+	Driver name      : pispbe
+
+========== ldconfig — avcodec / avutil / avformat / swscale resolution ==========
+$ /sbin/ldconfig -p 2>/dev/null | grep -iE 'libavcodec|libavutil|libavformat|libswscale|libswresample' | sort
+	libavcodec.so.61 (libc6,AArch64) => /lib/aarch64-linux-gnu/libavcodec.so.61
+	libavcodec.so (libc6,AArch64) => /lib/aarch64-linux-gnu/libavcodec.so
+	libavformat.so.61 (libc6,AArch64) => /lib/aarch64-linux-gnu/libavformat.so.61
+	libavformat.so (libc6,AArch64) => /lib/aarch64-linux-gnu/libavformat.so
+	libavutil.so.59 (libc6,AArch64) => /lib/aarch64-linux-gnu/libavutil.so.59
+	libavutil.so (libc6,AArch64) => /lib/aarch64-linux-gnu/libavutil.so
+	libswresample.so.5 (libc6,AArch64) => /lib/aarch64-linux-gnu/libswresample.so.5
+	libswresample.so (libc6,AArch64) => /lib/aarch64-linux-gnu/libswresample.so
+	libswscale.so.8 (libc6,AArch64) => /lib/aarch64-linux-gnu/libswscale.so.8
+	libswscale.so (libc6,AArch64) => /lib/aarch64-linux-gnu/libswscale.so
+
+========== SHA-256 of the system FFmpeg libs libndi dlopens for decode ==========
+7af5be31fb31dc26ba9136005e4936143a9f3e7f39a38a53035c23206099c57e  /lib/aarch64-linux-gnu/libavcodec.so.61
+a7859ff0004695adf441c5a7dd1075bc176310e920f1005e0ed7f1c53f43d772  /lib/aarch64-linux-gnu/libavutil.so.59
+7e44115b8d7399804f4baa8afabd2c886c26112062c7e30bd67fb959dfcbb0fc  /lib/aarch64-linux-gnu/libavformat.so.61
+4ceb96d4e4c25dfd74aac690bf4f45500d6bbcb6190136d7cdd687d013c940b5  /lib/aarch64-linux-gnu/libswscale.so.8
+374926732ce2901ea73e49f26f000a37a4694e9a7b5fbb944645716b1400b4bf  /lib/aarch64-linux-gnu/libswresample.so.5
+
+========== NDI SDK version ==========
+$ cat /opt/ndi-sdk/Version.txt
+NDI 2026-04-13 git-5396c5f15 v6.3.2.0
+
+========== libndi — every copy on the box, with SHA-256 (catches different builds) ==========
+$ find / -xdev -name 'libndi*.so*' -type f 2>/dev/null | sort | while read -r f; do sha256sum "$f"; done
+aacd443869fe1dc41cec4117ced7db0be5f6556194c0f5757a812d82459f91ce  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib.libs/libndi-78864ffc.so.6.1.1
+8486ebbb9aac76fce1baffc0d25cbdcfa4b3e8543ef56dca80680fae5344af58  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/wrapper/bin/aarch64-rpi4-linux-gnueabi/libndi.so
+12edc7cc4465852dbfbb53690789709b87db34981c590c33b0e8fc955cd111ca  /opt/ndi-sdk/lib/aarch64-rpi4-linux-gnueabi/libndi.so.6.3.2
+e02b695e17dbb598f9aa1d613030dc4e333f615964352cf1feda529ccd5d571b  /opt/ndi-sdk/lib/arm-rpi1-linux-gnueabihf/libndi.so.6.3.2
+c931ae1ddb4d4861edb1f447cb5f0bd206e2566122a3f4f365b83fd8a080040a  /opt/ndi-sdk/lib/arm-rpi2-linux-gnueabihf/libndi.so.6.3.2
+8ce6a3cd540ce99581ad705dc52704e8345e228468af7363e5399092d8d95cb5  /opt/ndi-sdk/lib/arm-rpi3-linux-gnueabihf/libndi.so.6.3.2
+89c77a2fd50b5cd72374546303f3237ca053bab884602fe3df38eddab5c1cde8  /opt/ndi-sdk/lib/arm-rpi4-linux-gnueabihf/libndi.so.6.3.2
+e1ddede8ba16cd9ca79b021f90b5ed711f6e5736a7874243d25b62aae7c1b1af  /opt/ndi-sdk/lib/i686-linux-gnu/libndi.so.6.3.2
+1c70a0068bb8ad1c894e556bc7c0e790dbd2c8229167d808d137a4b944355ae3  /opt/ndi-sdk/lib/x86_64-linux-gnu/libndi.so.6.3.2
+12edc7cc4465852dbfbb53690789709b87db34981c590c33b0e8fc955cd111ca  /usr/local/lib/libndi.so.6.3.2
+$ find / -xdev -name 'libndi*.so*' 2>/dev/null | sort
+/opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib.libs/libndi-78864ffc.so.6.1.1
+/opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/wrapper/bin/aarch64-rpi4-linux-gnueabi/libndi.so
+/opt/ndi-sdk/bin/aarch64-rpi4-linux-gnueabi/libndi.so.6
+/opt/ndi-sdk/bin/arm-rpi1-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/bin/arm-rpi2-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/bin/arm-rpi3-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/bin/arm-rpi4-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/bin/i686-linux-gnu/libndi.so.6
+/opt/ndi-sdk/bin/x86_64-linux-gnu/libndi.so.6
+/opt/ndi-sdk/lib/aarch64-rpi4-linux-gnueabi/libndi.so
+/opt/ndi-sdk/lib/aarch64-rpi4-linux-gnueabi/libndi.so.6
+/opt/ndi-sdk/lib/aarch64-rpi4-linux-gnueabi/libndi.so.6.3.2
+/opt/ndi-sdk/lib/arm-rpi1-linux-gnueabihf/libndi.so
+/opt/ndi-sdk/lib/arm-rpi1-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/lib/arm-rpi1-linux-gnueabihf/libndi.so.6.3.2
+/opt/ndi-sdk/lib/arm-rpi2-linux-gnueabihf/libndi.so
+/opt/ndi-sdk/lib/arm-rpi2-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/lib/arm-rpi2-linux-gnueabihf/libndi.so.6.3.2
+/opt/ndi-sdk/lib/arm-rpi3-linux-gnueabihf/libndi.so
+/opt/ndi-sdk/lib/arm-rpi3-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/lib/arm-rpi3-linux-gnueabihf/libndi.so.6.3.2
+/opt/ndi-sdk/lib/arm-rpi4-linux-gnueabihf/libndi.so
+/opt/ndi-sdk/lib/arm-rpi4-linux-gnueabihf/libndi.so.6
+/opt/ndi-sdk/lib/arm-rpi4-linux-gnueabihf/libndi.so.6.3.2
+/opt/ndi-sdk/lib/i686-linux-gnu/libndi.so
+/opt/ndi-sdk/lib/i686-linux-gnu/libndi.so.6
+/opt/ndi-sdk/lib/i686-linux-gnu/libndi.so.6.3.2
+/opt/ndi-sdk/lib/x86_64-linux-gnu/libndi.so
+/opt/ndi-sdk/lib/x86_64-linux-gnu/libndi.so.6
+/opt/ndi-sdk/lib/x86_64-linux-gnu/libndi.so.6.3.2
+/usr/local/lib/libndi.so
+/usr/local/lib/libndi.so.6
+/usr/local/lib/libndi.so.6.3.2
+
+========== SYSTEM libndi (used by ndi-streamer) — runtime deps ==========
+$ ldd /usr/local/lib/libndi.so.6 2>&1 | sort
+	libavahi-client.so.3 => /lib/aarch64-linux-gnu/libavahi-client.so.3 (0x00007ffed29a0000)
+	libavahi-common.so.3 => /lib/aarch64-linux-gnu/libavahi-common.so.3 (0x00007ffed29d0000)
+	libcap.so.2 => /lib/aarch64-linux-gnu/libcap.so.2 (0x00007ffed24e0000)
+	libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x00007ffed26c0000)
+	libdbus-1.so.3 => /lib/aarch64-linux-gnu/libdbus-1.so.3 (0x00007ffed2640000)
+	libdl.so.2 => /lib/aarch64-linux-gnu/libdl.so.2 (0x00007ffed2970000)
+	/lib/ld-linux-aarch64.so.1 (0x00007ffed2ff0000)
+	libm.so.6 => /lib/aarch64-linux-gnu/libm.so.6 (0x00007ffed28c0000)
+	libpthread.so.0 => /lib/aarch64-linux-gnu/libpthread.so.0 (0x00007ffed2890000)
+	libsystemd.so.0 => /lib/aarch64-linux-gnu/libsystemd.so.0 (0x00007ffed2510000)
+	linux-vdso.so.1 (0x00007ffed3028000)
+
+========== ndi-streamer BINARY — SHA-256 + full linkage ==========
+$ which ndi-streamer; sha256sum $(command -v ndi-streamer) 2>/dev/null
+/usr/local/bin/ndi-streamer
+f356992e4fc29d22299d1cb5d62a3298e1668042021f4e28d61b66a4829f3f41  /usr/local/bin/ndi-streamer
+$ ldd $(command -v ndi-streamer) 2>&1 | sort
+	libaom.so.3 => /lib/aarch64-linux-gnu/libaom.so.3 (0x00007fff99d40000)
+	libatomic.so.1 => /lib/aarch64-linux-gnu/libatomic.so.1 (0x00007fff95270000)
+	libavahi-client.so.3 => /lib/aarch64-linux-gnu/libavahi-client.so.3 (0x00007fff9bff0000)
+	libavahi-common.so.3 => /lib/aarch64-linux-gnu/libavahi-common.so.3 (0x00007fff9c020000)
+	libavcodec.so.61 => /lib/aarch64-linux-gnu/libavcodec.so.61 (0x00007fff9c300000)
+	libavformat.so.61 => /lib/aarch64-linux-gnu/libavformat.so.61 (0x00007fff9d640000)
+	libavutil.so.59 => /lib/aarch64-linux-gnu/libavutil.so.59 (0x00007fff9d950000)
+	libblkid.so.1 => /lib/aarch64-linux-gnu/libblkid.so.1 (0x00007fff94330000)
+	libbluray.so.2 => /lib/aarch64-linux-gnu/libbluray.so.2 (0x00007fff9b5f0000)
+	libbrotlicommon.so.1 => /lib/aarch64-linux-gnu/libbrotlicommon.so.1 (0x00007fff94410000)
+	libbrotlidec.so.1 => /lib/aarch64-linux-gnu/libbrotlidec.so.1 (0x00007fff94f60000)
+	libbrotlienc.so.1 => /lib/aarch64-linux-gnu/libbrotlienc.so.1 (0x00007fff94ea0000)
+	libbsd.so.0 => /lib/aarch64-linux-gnu/libbsd.so.0 (0x00007fff95860000)
+	libbz2.so.1.0 => /lib/aarch64-linux-gnu/libbz2.so.1.0 (0x00007fff9b980000)
+	libcairo-gobject.so.2 => /lib/aarch64-linux-gnu/libcairo-gobject.so.2 (0x00007fff95390000)
+	libcairo.so.2 => /lib/aarch64-linux-gnu/libcairo.so.2 (0x00007fff9a2f0000)
+	libcap.so.2 => /lib/aarch64-linux-gnu/libcap.so.2 (0x00007fff94d90000)
+	libchromaprint.so.1 => /lib/aarch64-linux-gnu/libchromaprint.so.1 (0x00007fff9b660000)
+	libcjson.so.1 => /lib/aarch64-linux-gnu/libcjson.so.1 (0x00007fff95910000)
+	libcodec2.so.1.2 => /lib/aarch64-linux-gnu/libcodec2.so.1.2 (0x00007fff98d00000)
+	libcom_err.so.2 => /lib/aarch64-linux-gnu/libcom_err.so.2 (0x00007fff94900000)
+	libcrypto.so.3 => /lib/aarch64-linux-gnu/libcrypto.so.3 (0x00007fff959f0000)
+	libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x00007fff9c050000)
+	libdatrie.so.1 => /lib/aarch64-linux-gnu/libdatrie.so.1 (0x00007fff942c0000)
+	libdav1d.so.7 => /lib/aarch64-linux-gnu/libdav1d.so.7 (0x00007fff9abe0000)
+	libdbus-1.so.3 => /lib/aarch64-linux-gnu/libdbus-1.so.3 (0x00007fff96d10000)
+	libdl.so.2 => /lib/aarch64-linux-gnu/libdl.so.2 (0x00007fff9bfc0000)
+	libdrm.so.2 => /lib/aarch64-linux-gnu/libdrm.so.2 (0x00007fff9bc40000)
+	libdvdnav.so.4 => /lib/aarch64-linux-gnu/libdvdnav.so.4 (0x00007fff9bbc0000)
+	libdvdread.so.8 => /lib/aarch64-linux-gnu/libdvdread.so.8 (0x00007fff9bb80000)
+	libexpat.so.1 => /lib/aarch64-linux-gnu/libexpat.so.1 (0x00007fff94b40000)
+	libffi.so.8 => /lib/aarch64-linux-gnu/libffi.so.8 (0x00007fff952a0000)
+	libfontconfig.so.1 => /lib/aarch64-linux-gnu/libfontconfig.so.1 (0x00007fff96830000)
+	libfreetype.so.6 => /lib/aarch64-linux-gnu/libfreetype.so.6 (0x00007fff96750000)
+	libfribidi.so.0 => /lib/aarch64-linux-gnu/libfribidi.so.0 (0x00007fff94510000)
+	libgcc_s.so.1 => /lib/aarch64-linux-gnu/libgcc_s.so.1 (0x00007fff96940000)
+	libgdk_pixbuf-2.0.so.0 => /lib/aarch64-linux-gnu/libgdk_pixbuf-2.0.so.0 (0x00007fff953c0000)
+	libgio-2.0.so.0 => /lib/aarch64-linux-gnu/libgio-2.0.so.0 (0x00007fff95410000)
+	libglib-2.0.so.0 => /lib/aarch64-linux-gnu/libglib-2.0.so.0 (0x00007fff9a450000)
+	libgme.so.0 => /lib/aarch64-linux-gnu/libgme.so.0 (0x00007fff9b910000)
+	libgmodule-2.0.so.0 => /lib/aarch64-linux-gnu/libgmodule-2.0.so.0 (0x00007fff94870000)
+	libgmp.so.10 => /lib/aarch64-linux-gnu/libgmp.so.10 (0x00007fff96130000)
+	libgnutls.so.30 => /lib/aarch64-linux-gnu/libgnutls.so.30 (0x00007fff9b350000)
+	libgobject-2.0.so.0 => /lib/aarch64-linux-gnu/libgobject-2.0.so.0 (0x00007fff9a5e0000)
+	libgomp.so.1 => /lib/aarch64-linux-gnu/libgomp.so.1 (0x00007fff94d20000)
+	libgraphite2.so.3 => /lib/aarch64-linux-gnu/libgraphite2.so.3 (0x00007fff942f0000)
+	libgsm.so.1 => /lib/aarch64-linux-gnu/libgsm.so.1 (0x00007fff98cd0000)
+	libgssapi_krb5.so.2 => /lib/aarch64-linux-gnu/libgssapi_krb5.so.2 (0x00007fff958a0000)
+	libharfbuzz.so.0 => /lib/aarch64-linux-gnu/libharfbuzz.so.0 (0x00007fff94550000)
+	libhogweed.so.6 => /lib/aarch64-linux-gnu/libhogweed.so.6 (0x00007fff96240000)
+	libhwy.so.1 => /lib/aarch64-linux-gnu/libhwy.so.1 (0x00007fff94f90000)
+	libidn2.so.0 => /lib/aarch64-linux-gnu/libidn2.so.0 (0x00007fff964f0000)
+	libjpeg.so.62 => /lib/aarch64-linux-gnu/libjpeg.so.62 (0x00007fff946f0000)
+	libjxl_cms.so.0.11 => /lib/aarch64-linux-gnu/libjxl_cms.so.0.11 (0x00007fff94fc0000)
+	libjxl.so.0.11 => /lib/aarch64-linux-gnu/libjxl.so.0.11 (0x00007fff989e0000)
+	libjxl_threads.so.0.11 => /lib/aarch64-linux-gnu/libjxl_threads.so.0.11 (0x00007fff989b0000)
+	libk5crypto.so.3 => /lib/aarch64-linux-gnu/libk5crypto.so.3 (0x00007fff94930000)
+	libkeyutils.so.1 => /lib/aarch64-linux-gnu/libkeyutils.so.1 (0x00007fff943e0000)
+	libkrb5.so.3 => /lib/aarch64-linux-gnu/libkrb5.so.3 (0x00007fff94980000)
+	libkrb5support.so.0 => /lib/aarch64-linux-gnu/libkrb5support.so.0 (0x00007fff948d0000)
+	liblcms2.so.2 => /lib/aarch64-linux-gnu/liblcms2.so.2 (0x00007fff94450000)
+	/lib/ld-linux-aarch64.so.1 (0x00007fff9f090000)
+	liblzma.so.5 => /lib/aarch64-linux-gnu/liblzma.so.5 (0x00007fff9ace0000)
+	libmbedcrypto.so.16 => /lib/aarch64-linux-gnu/libmbedcrypto.so.16 (0x00007fff95940000)
+	libmd.so.0 => /lib/aarch64-linux-gnu/libmd.so.0 (0x00007fff948a0000)
+	libmount.so.1 => /lib/aarch64-linux-gnu/libmount.so.1 (0x00007fff947d0000)
+	libmp3lame.so.0 => /lib/aarch64-linux-gnu/libmp3lame.so.0 (0x00007fff98910000)
+	libmpg123.so.0 => /lib/aarch64-linux-gnu/libmpg123.so.0 (0x00007fff968d0000)
+	libm.so.6 => /lib/aarch64-linux-gnu/libm.so.6 (0x00007fff9bf10000)
+	libmvec.so.1 => /lib/aarch64-linux-gnu/libmvec.so.1 (0x00007fff94dc0000)
+	libndi.so.6 => /opt/ndi-sdk/lib/aarch64-rpi4-linux-gnueabi/libndi.so.6 (0x00007fff9ea80000)
+	libnettle.so.8 => /lib/aarch64-linux-gnu/libnettle.so.8 (0x00007fff961d0000)
+	libnorm.so.1 => /lib/aarch64-linux-gnu/libnorm.so.1 (0x00007fff95640000)
+	libnuma.so.1 => /lib/aarch64-linux-gnu/libnuma.so.1 (0x00007fff94e10000)
+	libogg.so.0 => /lib/aarch64-linux-gnu/libogg.so.0 (0x00007fff94e70000)
+	libOpenCL.so.1 => /lib/aarch64-linux-gnu/libOpenCL.so.1 (0x00007fff9bc00000)
+	libopenjp2.so.7 => /lib/aarch64-linux-gnu/libopenjp2.so.7 (0x00007fff98880000)
+	libopenmpt.so.0 => /lib/aarch64-linux-gnu/libopenmpt.so.0 (0x00007fff9b6a0000)
+	libopus.so.0 => /lib/aarch64-linux-gnu/libopus.so.0 (0x00007fff98510000)
+	libp11-kit.so.0 => /lib/aarch64-linux-gnu/libp11-kit.so.0 (0x00007fff96540000)
+	libpango-1.0.so.0 => /lib/aarch64-linux-gnu/libpango-1.0.so.0 (0x00007fff952d0000)
+	libpangocairo-1.0.so.0 => /lib/aarch64-linux-gnu/libpangocairo-1.0.so.0 (0x00007fff95360000)
+	libpangoft2-1.0.so.0 => /lib/aarch64-linux-gnu/libpangoft2-1.0.so.0 (0x00007fff946b0000)
+	libpcre2-8.so.0 => /lib/aarch64-linux-gnu/libpcre2-8.so.0 (0x00007fff951b0000)
+	libpgm-5.3.so.0 => /lib/aarch64-linux-gnu/libpgm-5.3.so.0 (0x00007fff95790000)
+	libpixman-1.so.0 => /lib/aarch64-linux-gnu/libpixman-1.so.0 (0x00007fff95000000)
+	libpng16.so.16 => /lib/aarch64-linux-gnu/libpng16.so.16 (0x00007fff95150000)
+	libpthread.so.0 => /lib/aarch64-linux-gnu/libpthread.so.0 (0x00007fff9bee0000)
+	librabbitmq.so.4 => /lib/aarch64-linux-gnu/librabbitmq.so.4 (0x00007fff9b310000)
+	librav1e.so.0.7 => /lib/aarch64-linux-gnu/librav1e.so.0.7 (0x00007fff982e0000)
+	libresolv.so.2 => /lib/aarch64-linux-gnu/libresolv.so.2 (0x00007fff943b0000)
+	librist.so.4 => /lib/aarch64-linux-gnu/librist.so.4 (0x00007fff9b2c0000)
+	librsvg-2.so.2 => /lib/aarch64-linux-gnu/librsvg-2.so.2 (0x00007fff9a670000)
+	libselinux.so.1 => /lib/aarch64-linux-gnu/libselinux.so.1 (0x00007fff94770000)
+	libsharpyuv.so.0 => /lib/aarch64-linux-gnu/libsharpyuv.so.0 (0x00007fff94e40000)
+	libshine.so.3 => /lib/aarch64-linux-gnu/libshine.so.3 (0x00007fff982b0000)
+	libsnappy.so.1 => /lib/aarch64-linux-gnu/libsnappy.so.1 (0x00007fff9a220000)
+	libsodium.so.23 => /lib/aarch64-linux-gnu/libsodium.so.23 (0x00007fff95800000)
+	libsoxr.so.0 => /lib/aarch64-linux-gnu/libsoxr.so.0 (0x00007fff96d90000)
+	libspeex.so.1 => /lib/aarch64-linux-gnu/libspeex.so.1 (0x00007fff98270000)
+	libsrt-gnutls.so.1.5 => /lib/aarch64-linux-gnu/libsrt-gnutls.so.1.5 (0x00007fff9b1c0000)
+	libssh.so.4 => /lib/aarch64-linux-gnu/libssh.so.4 (0x00007fff9b120000)
+	libssl.so.3 => /lib/aarch64-linux-gnu/libssl.so.3 (0x00007fff96000000)
+	libstdc++.so.6 => /lib/aarch64-linux-gnu/libstdc++.so.6 (0x00007fff96980000)
+	libSvtAv1Enc.so.2 => /lib/aarch64-linux-gnu/libSvtAv1Enc.so.2 (0x00007fff97cf0000)
+	libswresample.so.5 => /lib/aarch64-linux-gnu/libswresample.so.5 (0x00007fff9c220000)
+	libswscale.so.8 => /lib/aarch64-linux-gnu/libswscale.so.8 (0x00007fff9c260000)
+	libsystemd.so.0 => /lib/aarch64-linux-gnu/libsystemd.so.0 (0x00007fff94bf0000)
+	libtasn1.so.6 => /lib/aarch64-linux-gnu/libtasn1.so.6 (0x00007fff962b0000)
+	libthai.so.0 => /lib/aarch64-linux-gnu/libthai.so.0 (0x00007fff944e0000)
+	libtheoradec.so.1 => /lib/aarch64-linux-gnu/libtheoradec.so.1 (0x00007fff97c60000)
+	libtheoraenc.so.1 => /lib/aarch64-linux-gnu/libtheoraenc.so.1 (0x00007fff97ca0000)
+	libtwolame.so.0 => /lib/aarch64-linux-gnu/libtwolame.so.0 (0x00007fff97c20000)
+	libudev.so.1 => /lib/aarch64-linux-gnu/libudev.so.1 (0x00007fff96e00000)
+	libudfread.so.0 => /lib/aarch64-linux-gnu/libudfread.so.0 (0x00007fff96720000)
+	libunistring.so.5 => /lib/aarch64-linux-gnu/libunistring.so.5 (0x00007fff962f0000)
+	libva-drm.so.2 => /lib/aarch64-linux-gnu/libva-drm.so.2 (0x00007fff9beb0000)
+	libva.so.2 => /lib/aarch64-linux-gnu/libva.so.2 (0x00007fff9be50000)
+	libva-x11.so.2 => /lib/aarch64-linux-gnu/libva-x11.so.2 (0x00007fff9be20000)
+	libvdpau.so.1 => /lib/aarch64-linux-gnu/libvdpau.so.1 (0x00007fff9bdf0000)
+	libvorbisenc.so.2 => /lib/aarch64-linux-gnu/libvorbisenc.so.2 (0x00007fff97b10000)
+	libvorbisfile.so.3 => /lib/aarch64-linux-gnu/libvorbisfile.so.3 (0x00007fff968a0000)
+	libvorbis.so.0 => /lib/aarch64-linux-gnu/libvorbis.so.0 (0x00007fff97bd0000)
+	libvpx.so.9 => /lib/aarch64-linux-gnu/libvpx.so.9 (0x00007fff9ad60000)
+	libwebpmux.so.3 => /lib/aarch64-linux-gnu/libwebpmux.so.3 (0x00007fff9ad30000)
+	libwebp.so.7 => /lib/aarch64-linux-gnu/libwebp.so.7 (0x00007fff97a90000)
+	libX11.so.6 => /lib/aarch64-linux-gnu/libX11.so.6 (0x00007fff9bc80000)
+	libX11-xcb.so.1 => /lib/aarch64-linux-gnu/libX11-xcb.so.1 (0x00007fff96c70000)
+	libx264.so.164 => /lib/aarch64-linux-gnu/libx264.so.164 (0x00007fff97830000)
+	libx265.so.215 => /lib/aarch64-linux-gnu/libx265.so.215 (0x00007fff96f60000)
+	libXau.so.6 => /lib/aarch64-linux-gnu/libXau.so.6 (0x00007fff94bc0000)
+	libxcb-dri3.so.0 => /lib/aarch64-linux-gnu/libxcb-dri3.so.0 (0x00007fff96bf0000)
+	libxcb-render.so.0 => /lib/aarch64-linux-gnu/libxcb-render.so.0 (0x00007fff950f0000)
+	libxcb-shm.so.0 => /lib/aarch64-linux-gnu/libxcb-shm.so.0 (0x00007fff950c0000)
+	libxcb.so.1 => /lib/aarch64-linux-gnu/libxcb.so.1 (0x00007fff96c20000)
+	libXdmcp.so.6 => /lib/aarch64-linux-gnu/libXdmcp.so.6 (0x00007fff94b90000)
+	libXext.so.6 => /lib/aarch64-linux-gnu/libXext.so.6 (0x00007fff96cd0000)
+	libXfixes.so.3 => /lib/aarch64-linux-gnu/libXfixes.so.3 (0x00007fff96ca0000)
+	libxml2.so.2 => /lib/aarch64-linux-gnu/libxml2.so.2 (0x00007fff9b9b0000)
+	libXrender.so.1 => /lib/aarch64-linux-gnu/libXrender.so.1 (0x00007fff95120000)
+	libxvidcore.so.4 => /lib/aarch64-linux-gnu/libxvidcore.so.4 (0x00007fff96e60000)
+	libzmq.so.5 => /lib/aarch64-linux-gnu/libzmq.so.5 (0x00007fff9b040000)
+	libz.so.1 => /lib/aarch64-linux-gnu/libz.so.1 (0x00007fff9b5b0000)
+	libzstd.so.1 => /lib/aarch64-linux-gnu/libzstd.so.1 (0x00007fff94a70000)
+	libzvbi.so.0 => /lib/aarch64-linux-gnu/libzvbi.so.0 (0x00007fff9a250000)
+	linux-vdso.so.1 (0x00007fff9f0c8000)
+
+========== cyndilib — version + its BUNDLED libndi + av libs (with SHA-256) ==========
+$ /opt/ndi-rmtp/app/.venv/bin/python -c "import cyndilib, importlib.metadata as m; print('cyndilib', m.version('cyndilib'))"
+cyndilib 0.1.1
+$ ls -la $(dirname $(/opt/ndi-rmtp/app/.venv/bin/python -c 'import cyndilib,os;print(os.path.dirname(cyndilib.__file__))')/../*.libs 2>/dev/null) 2>/dev/null || true
+/opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/..:
+total 416
+drwxrwxr-x 60 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 .
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 ..
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_doc
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_doc-0.0.4.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_types
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_types-0.7.0.dist-info
+drwxrwxr-x  6 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 anyio
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 anyio-4.13.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 click
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 click-8.4.1.dist-info
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 cyndilib
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 cyndilib-0.1.1.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 cyndilib.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 dotenv
+-rw-rw-r--  2 ndi-rmtp ndi-rmtp     21 Jul 14 23:15 _editable_impl_ndi_rmtp.pth
+drwxrwxr-x  8 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 fastapi
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 fastapi-0.136.3.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 h11
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 h11-0.16.0.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 httptools
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 httptools-0.8.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 idna
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 idna-3.18.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 jinja2
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 jinja2-3.1.6.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 markupsafe
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 markupsafe-3.0.3.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 multipart
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 ndi_rmtp-0.1.0.dist-info
+drwxrwxr-x 24 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 numpy
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 numpy-2.4.6.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 numpy.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 PIL
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pillow-12.2.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pillow.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 __pycache__
+drwxrwxr-x  7 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic-2.13.4.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic_core
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic_core-2.46.4.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_dotenv-1.2.2.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_multipart
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_multipart-0.0.32.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pyyaml-6.0.3.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 starlette
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 starlette-1.2.1.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 tomli_w
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 tomli_w-1.2.0.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_extensions-4.15.0.dist-info
+-rw-rw-r--  2 ndi-rmtp ndi-rmtp 160429 Jul 14 23:15 typing_extensions.py
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_inspection
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_inspection-0.4.2.dist-info
+drwxrwxr-x  7 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvicorn
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvicorn-0.49.0.dist-info
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvloop
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvloop-0.22.1.dist-info
+-rw-rw-r--  1 ndi-rmtp ndi-rmtp     18 Jul 14 23:15 _virtualenv.pth
+-rw-rw-r--  1 ndi-rmtp ndi-rmtp   5246 Jul 14 23:15 _virtualenv.py
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 watchfiles
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 watchfiles-1.2.0.dist-info
+drwxrwxr-x  6 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 websockets
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 websockets-16.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 _yaml
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 yaml
+
+/opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/..:
+total 416
+drwxrwxr-x 60 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 .
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 ..
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_doc
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_doc-0.0.4.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_types
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_types-0.7.0.dist-info
+drwxrwxr-x  6 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 anyio
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 anyio-4.13.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 click
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 click-8.4.1.dist-info
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 cyndilib
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 cyndilib-0.1.1.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 cyndilib.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 dotenv
+-rw-rw-r--  2 ndi-rmtp ndi-rmtp     21 Jul 14 23:15 _editable_impl_ndi_rmtp.pth
+drwxrwxr-x  8 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 fastapi
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 fastapi-0.136.3.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 h11
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 h11-0.16.0.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 httptools
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 httptools-0.8.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 idna
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 idna-3.18.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 jinja2
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 jinja2-3.1.6.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 markupsafe
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 markupsafe-3.0.3.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 multipart
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 ndi_rmtp-0.1.0.dist-info
+drwxrwxr-x 24 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 numpy
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 numpy-2.4.6.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 numpy.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 PIL
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pillow-12.2.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pillow.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 __pycache__
+drwxrwxr-x  7 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic-2.13.4.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic_core
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic_core-2.46.4.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_dotenv-1.2.2.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_multipart
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_multipart-0.0.32.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pyyaml-6.0.3.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 starlette
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 starlette-1.2.1.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 tomli_w
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 tomli_w-1.2.0.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_extensions-4.15.0.dist-info
+-rw-rw-r--  2 ndi-rmtp ndi-rmtp 160429 Jul 14 23:15 typing_extensions.py
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_inspection
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_inspection-0.4.2.dist-info
+drwxrwxr-x  7 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvicorn
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvicorn-0.49.0.dist-info
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvloop
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvloop-0.22.1.dist-info
+-rw-rw-r--  1 ndi-rmtp ndi-rmtp     18 Jul 14 23:15 _virtualenv.pth
+-rw-rw-r--  1 ndi-rmtp ndi-rmtp   5246 Jul 14 23:15 _virtualenv.py
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 watchfiles
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 watchfiles-1.2.0.dist-info
+drwxrwxr-x  6 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 websockets
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 websockets-16.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 _yaml
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 yaml
+
+/opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/..:
+total 416
+drwxrwxr-x 60 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 .
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 ..
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_doc
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_doc-0.0.4.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_types
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 annotated_types-0.7.0.dist-info
+drwxrwxr-x  6 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 anyio
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 anyio-4.13.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 click
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 click-8.4.1.dist-info
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 cyndilib
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 cyndilib-0.1.1.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 cyndilib.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 dotenv
+-rw-rw-r--  2 ndi-rmtp ndi-rmtp     21 Jul 14 23:15 _editable_impl_ndi_rmtp.pth
+drwxrwxr-x  8 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 fastapi
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 fastapi-0.136.3.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 h11
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 h11-0.16.0.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 httptools
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 httptools-0.8.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 idna
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 idna-3.18.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 jinja2
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 jinja2-3.1.6.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 markupsafe
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 markupsafe-3.0.3.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 multipart
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 ndi_rmtp-0.1.0.dist-info
+drwxrwxr-x 24 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 numpy
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 numpy-2.4.6.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 numpy.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 PIL
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pillow-12.2.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pillow.libs
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 17 04:28 __pycache__
+drwxrwxr-x  7 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic-2.13.4.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic_core
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pydantic_core-2.46.4.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_dotenv-1.2.2.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_multipart
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 python_multipart-0.0.32.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 pyyaml-6.0.3.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 starlette
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 starlette-1.2.1.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 tomli_w
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 tomli_w-1.2.0.dist-info
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_extensions-4.15.0.dist-info
+-rw-rw-r--  2 ndi-rmtp ndi-rmtp 160429 Jul 14 23:15 typing_extensions.py
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_inspection
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 typing_inspection-0.4.2.dist-info
+drwxrwxr-x  7 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvicorn
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvicorn-0.49.0.dist-info
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvloop
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 uvloop-0.22.1.dist-info
+-rw-rw-r--  1 ndi-rmtp ndi-rmtp     18 Jul 14 23:15 _virtualenv.pth
+-rw-rw-r--  1 ndi-rmtp ndi-rmtp   5246 Jul 14 23:15 _virtualenv.py
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 watchfiles
+drwxrwxr-x  4 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 watchfiles-1.2.0.dist-info
+drwxrwxr-x  6 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 websockets
+drwxrwxr-x  3 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 websockets-16.0.dist-info
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 _yaml
+drwxrwxr-x  2 ndi-rmtp ndi-rmtp   4096 Jul 14 23:15 yaml
+$ find /opt/ndi-rmtp/app/.venv -name 'libndi*' -o -name 'libav*' 2>/dev/null | sort | while read -r f; do sha256sum "$f"; done
+2661e1dc1d5f0013b15279ba52e4f55788e8ffcb621f7b1886c30c580f5195fb  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib-0.1.1.dist-info/licenses/libndi_licenses.txt
+0656fb64d999614df2e64b54da9acdf90dbbfe102d6cf1d9a4c66b7dbd6b2664  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib.libs/libavahi-client-b44d54d7.so.3.2.9
+d718693f796bc7e195fab3265580e3b3db1b375e41890747942b96e929b14599  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib.libs/libavahi-common-ffbe68a9.so.3.5.3
+aacd443869fe1dc41cec4117ced7db0be5f6556194c0f5757a812d82459f91ce  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib.libs/libndi-78864ffc.so.6.1.1
+8486ebbb9aac76fce1baffc0d25cbdcfa4b3e8543ef56dca80680fae5344af58  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/wrapper/bin/aarch64-rpi4-linux-gnueabi/libndi.so
+2661e1dc1d5f0013b15279ba52e4f55788e8ffcb621f7b1886c30c580f5195fb  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/cyndilib/wrapper/bin/libndi_licenses.txt
+8914a1ed1ed45f8d5fd738c370c4a92c990e54102d10c89afe3687670976db27  /opt/ndi-rmtp/app/.venv/lib/python3.13/site-packages/pillow.libs/libavif-ac9db8e8.so.16.4.1
+
+========== APP — python env (pip freeze) + git commit + configured quality ==========
+$ /opt/ndi-rmtp/app/.venv/bin/python -m pip freeze 2>/dev/null | sort || echo '(pip n/a)'
+$ git -C /opt/ndi-rmtp/app rev-parse HEAD 2>/dev/null || echo '(app dir not a git checkout)'
+(app dir not a git checkout)
+$ git -C /opt/ndi-rmtp/app log -1 --format='%h %ci %s' 2>/dev/null || true
+$ sudo -n grep -E '^quality|active_ward' /home/ndi-rmtp/.config/ndi-rmtp/config.toml 2>/dev/null || echo '(config needs sudo)'
+active_ward = "Test Ward"
+quality = "high"
+# below are filled in. Set as active_ward above so the box is testable now.
+
+========== CAMERA — discovered NDI source(s) via the running app ==========
+$ curl -s -m 8 http://localhost/api/sources 2>/dev/null || curl -s -m 8 http://localhost:8080/api/sources 2>/dev/null || echo '(app API unreachable)'
+[{"name":"UHD CAMERA (NDI HX3, 192.168.111.248)","address":"192.168.111.248:5962"}]
+========== CAMERA — normalized model string (strip IP so it diffs cleanly) ==========
+$ curl -s -m 8 http://localhost/api/sources 2>/dev/null | grep -oE '"name":"[^"]*"' | sed -E 's/, ?[0-9.]+\)/)/' | sort -u || echo '(n/a)'
+"name":"UHD CAMERA (NDI HX3)"
+
+========== CAMERA — web-server banner (weak identity probe, no auth) ==========
+$ curl -s -m 5 -i http://$(curl -s -m 8 http://localhost/api/sources 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)/ 2>&1 | grep -iE '^HTTP|Server:|WWW-Authenticate' | head -5 || echo '(camera web probe n/a)'
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Digest realm="", charset="UTF-8", algorithm=MD5, nonce="68da4d50:cc79c3d115334609a0b9ec7755f218fa", qop="auth"
+Server: lighttpd/1.4.75
+
+############################ END ###########################

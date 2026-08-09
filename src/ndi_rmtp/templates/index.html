@@ -392,6 +392,22 @@
       } catch (_) { /* ignore */ }
     });
 
+    // ---- Keep the streaming chip's ward label in sync ---------------------
+    // `.chip-ward` is only rendered server-side at page load. The ward
+    // <select> persists changes via its own hx-post to /api/config, but
+    // nothing else in the page touched this label — so switching wards and
+    // starting a stream right after showed the *previous* ward's name in
+    // the chip, even though the correct ward's key/overlay was actually
+    // used. Update it straight from the select on change; no need to wait
+    // for the /api/config round-trip since we already know the new value.
+    const wardSelect = document.getElementById("active-ward-select");
+    const chipWard = document.querySelector(".chip-ward");
+    if (wardSelect && chipWard) {
+      wardSelect.addEventListener("change", () => {
+        chipWard.textContent = wardSelect.value || "—";
+      });
+    }
+
     // ---- Auto-recall default preset on Start success ---------------------
     // As soon as the stream comes up, tell the camera to snap to the ward's
     // preferred starting preset. This lands during YouTube's "Preparing

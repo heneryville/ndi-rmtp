@@ -288,7 +288,69 @@ async def test_starting_times_out_to_error_if_no_streaming_signal():
                 break
             await asyncio.sleep(0.05)
         assert streamer.status().state == "ERROR"
-        assert "Timed out" in (streamer.status().last_error or "")
+        # No decode/RTMP clue in stderr → ambiguous, so the message must name
+        # BOTH possible causes (camera and stream key), not assert one.
+        err = (streamer.status().last_error or "").lower()
+        assert "camera" in err and "stream key" in err
+        await streamer.stop()
+    finally:
+        streamer_mod.STARTING_TIMEOUT_S = original_timeout
+
+
+async def test_start_timeout_with_rtmp_error_points_at_youtube():
+    """If stderr shows an RTMP connection failure, the timeout error should
+    blame YouTube/the stream key — not the camera."""
+    from ndi_rmtp import streamer as streamer_mod
+    original_timeout = streamer_mod.STARTING_TIMEOUT_S
+    streamer_mod.STARTING_TIMEOUT_S = 0.5
+    try:
+        argv_prefix, env = _fake_args([
+            {"type": "stderr", "line": "[rtmp @ 0x1] Cannot open connection tcp://a.rtmp.youtube.com:1935"},
+            {"type": "sleep", "seconds": 5},
+        ])
+        cfg = _config()
+        streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+        streamer._spawn_argv = argv_prefix
+        streamer._spawn_env = env
+
+        await streamer.start("SRC", "key", "medium")
+        for _ in range(40):
+            if streamer.status().state == "ERROR":
+                break
+            await asyncio.sleep(0.05)
+        assert streamer.status().state == "ERROR"
+        err = (streamer.status().last_error or "").lower()
+        assert "youtube" in err and "stream key" in err
+        assert "camera isn't sending" not in err
+        await streamer.stop()
+    finally:
+        streamer_mod.STARTING_TIMEOUT_S = original_timeout
+
+
+async def test_start_timeout_with_decode_error_points_at_camera():
+    """If stderr shows an H.264 decode failure, the timeout error should blame
+    the camera feed, not the stream key."""
+    from ndi_rmtp import streamer as streamer_mod
+    original_timeout = streamer_mod.STARTING_TIMEOUT_S
+    streamer_mod.STARTING_TIMEOUT_S = 0.5
+    try:
+        argv_prefix, env = _fake_args([
+            {"type": "stderr", "line": "[h264 @ 0x1] No start code is found."},
+            {"type": "sleep", "seconds": 5},
+        ])
+        cfg = _config()
+        streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+        streamer._spawn_argv = argv_prefix
+        streamer._spawn_env = env
+
+        await streamer.start("SRC", "key", "medium")
+        for _ in range(40):
+            if streamer.status().state == "ERROR":
+                break
+            await asyncio.sleep(0.05)
+        assert streamer.status().state == "ERROR"
+        err = (streamer.status().last_error or "").lower()
+        assert "camera" in err and "decod" in err
         await streamer.stop()
     finally:
         streamer_mod.STARTING_TIMEOUT_S = original_timeout

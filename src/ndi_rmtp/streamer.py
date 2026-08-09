@@ -34,6 +34,22 @@ STREAMING_PATTERNS = (b"Output #0,", b"Stream mapping:")
 # Signals that YouTube/RTMP server refused — do not auto-retry.
 FATAL_PATTERNS = (b"403 Forbidden", b"Invalid stream key", b"Server returned 403")
 
+# A start can stall for two *different* reasons that both surface as "no
+# Output #0 within STARTING_TIMEOUT_S" and look identical in the UI. When we
+# time out we scan the subprocess's stderr for these to point at the real
+# culprit instead of always blaming the camera. (Debugging a live appliance in
+# Aug 2026 wasted hours because the old message — "Timed out waiting for first
+# frame" — asserted a camera problem when the camera was fine and the ward's
+# YouTube key simply wasn't accepting the stream.)
+_RTMP_ERROR_MARKERS = (
+    "cannot open connection", "connection refused", "connection reset",
+    "broken pipe", "error opening output", "i/o error", "end of file",
+)
+_DECODE_ERROR_MARKERS = (
+    "no start code", "error while decoding", "invalid data found",
+    "non-existing pps", "decode_slice_header error",
+)
+
 STARTING_TIMEOUT_S = 10.0
 STOP_GRACE_S = 5.0
 LOG_BUFFER_LINES = 200
@@ -404,12 +420,44 @@ class Streamer:
         except Exception as e:  # pragma: no cover
             logger.exception("stderr reader crashed: %s", e)
 
+    def _diagnose_start_timeout(self) -> str:
+        """Explain a STARTING timeout using whatever the subprocess printed.
+
+        Reaching STREAMING requires ndi-streamer to (1) receive+decode a frame
+        AND (2) open its RTMP output — and a stall in either step produces the
+        same 10s timeout. Blaming "first frame" is wrong half the time, so we
+        classify from stderr: explicit RTMP trouble → the ward's YouTube key /
+        network; decode errors → the camera feed; nothing at all → genuinely
+        ambiguous, so name BOTH the camera and the key rather than mislead.
+        """
+        blob = "\n".join(list(self._log_buffer)).lower()
+        secs = int(STARTING_TIMEOUT_S)
+        if any(m in blob for m in _RTMP_ERROR_MARKERS):
+            return (
+                "Couldn't connect to YouTube's streaming server. Check the "
+                "network connection and this ward's YouTube stream key, then "
+                "try again. If it keeps happening, contact your Stake "
+                "Technology Specialist."
+            )
+        if any(m in blob for m in _DECODE_ERROR_MARKERS):
+            return (
+                "The camera is connected but its video isn't decoding. Make "
+                "sure the camera's NDI output is set to 1080p. Contact your "
+                "Stake Technology Specialist if it persists."
+            )
+        return (
+            f"The stream didn't start within {secs} seconds. Either the camera "
+            "isn't sending video (check it is powered on and connected) or "
+            "YouTube isn't accepting this ward's stream key. Contact your "
+            "Stake Technology Specialist."
+        )
+
     async def _starting_watchdog(self) -> None:
         """If we don't reach STREAMING within STARTING_TIMEOUT_S, force ERROR."""
         await asyncio.sleep(STARTING_TIMEOUT_S)
         async with self._lock:
             if self._sm.state == State.STARTING:
-                self._last_error = "Timed out waiting for first frame"
+                self._last_error = self._diagnose_start_timeout()
                 self._sm.transition(State.ERROR, "starting timeout")
                 proc = self._proc
             else:

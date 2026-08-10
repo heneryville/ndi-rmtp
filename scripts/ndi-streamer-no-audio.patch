@@ -227,7 +227,7 @@ index 5d5a99c..084eca3 100644
  #endif
 \ No newline at end of file
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..622aa38 100644
+index 399a4eb..6964045 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
 @@ -5,12 +5,22 @@
@@ -413,9 +413,19 @@ index 399a4eb..622aa38 100644
      char ffmpeg_output_format[30];
      if (strcmp(opts.output_format, "rtmp") == 0) {
          snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
-@@ -107,7 +240,11 @@ main(int argc, char **argv)
+@@ -106,8 +239,21 @@ main(int argc, char **argv)
+             continue;
          }
  
++        // Signal that the output connection is open (for RTMP, this means the
++        // handshake to YouTube completed) BEFORE we block waiting for the
++        // camera's first frame. The control plane uses the presence/absence of
++        // this line to tell a stuck RTMP connect (stream key already live, or
++        // wrong) apart from a camera that isn't delivering video — the two look
++        // identical otherwise and a stuck connect prints no error of its own.
++        // Deliberately omits opts.output: that URL contains the secret key.
++        fprintf(stderr, "[startup] output connection opened\n");
++
          NDIlib_video_frame_v2_t v_frame;
 -        NDIlib_audio_frame_v2_t a_frame;
 +        // Use v3 audio frames: NDIlib_recv_capture_v2 silently returns
@@ -426,7 +436,7 @@ index 399a4eb..622aa38 100644
  
          int width = 0, height = 0;
          AVRational frame_rate = {};
-@@ -127,10 +264,17 @@ main(int argc, char **argv)
+@@ -127,10 +273,17 @@ main(int argc, char **argv)
  
          ffmpeg_output_close_codecs(fa_ctx);
  
@@ -447,7 +457,7 @@ index 399a4eb..622aa38 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -139,17 +283,113 @@ main(int argc, char **argv)
+@@ -139,17 +292,113 @@ main(int argc, char **argv)
  
          fc_reset(fc_ctx);
  
@@ -565,7 +575,7 @@ index 399a4eb..622aa38 100644
  
                  NDIlib_recv_free_video_v2(recv, &v_frame);
  
-@@ -158,18 +398,41 @@ main(int argc, char **argv)
+@@ -158,18 +407,41 @@ main(int argc, char **argv)
                      break;
                  }
              }
@@ -609,7 +619,7 @@ index 399a4eb..622aa38 100644
  
                  while ((frame = fc_ndi_audio_frame_to_avframe(
                                  fc_ctx, fa_ctx->audio_codec_ctx, NULL))
-@@ -189,6 +452,8 @@ main(int argc, char **argv)
+@@ -189,6 +461,8 @@ main(int argc, char **argv)
  
      free_frame_converter_ctx(&fc_ctx);
  
@@ -618,7 +628,7 @@ index 399a4eb..622aa38 100644
      NDIlib_recv_destroy(recv);
  
      NDIlib_destroy();
-@@ -279,6 +544,11 @@ const ProgramOption options[] = {
+@@ -279,6 +553,11 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
@@ -630,7 +640,7 @@ index 399a4eb..622aa38 100644
      { NULL, NULL, 0 },
  };
  
-@@ -298,6 +568,7 @@ read_params(int argc, char **argv)
+@@ -298,6 +577,7 @@ read_params(int argc, char **argv)
      sprintf(res.output, "rtsp://127.0.0.1:8554/live.sdp");
      res.video_bitrate = 30000000;
      res.audio_bitrate = 320000;
@@ -638,7 +648,7 @@ index 399a4eb..622aa38 100644
  
      for (; (c = op_parse(argc, argv, op_ctx, &opt)) != -1;) {
          switch (c) {
-@@ -352,6 +623,33 @@ read_params(int argc, char **argv)
+@@ -352,6 +632,33 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }

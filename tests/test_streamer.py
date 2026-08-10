@@ -265,16 +265,19 @@ async def test_auto_restart_skipped_after_fatal_pattern():
     assert streamer.status().state == "ERROR"
 
 
-async def test_starting_times_out_to_error_if_no_streaming_signal():
-    """If ndi-streamer doesn't emit Output #0 within STARTING_TIMEOUT_S, go to ERROR."""
+async def test_start_timeout_before_output_opens_blames_stream_key():
+    """If the RTMP output never opened (no OUTPUT_OPENED_MARKER), a timeout means
+    the connect to YouTube hung — classify as the stream key, NOT the camera,
+    even when an unrelated decoder 'No start code' line is present (the exact
+    real-world misdiagnosis this replaced)."""
     from ndi_rmtp import streamer as streamer_mod
     # Speed up the timeout for the test
     original_timeout = streamer_mod.STARTING_TIMEOUT_S
     streamer_mod.STARTING_TIMEOUT_S = 0.5
     try:
-        # Script: emit non-trigger lines forever (no "Output #0,")
+        # Decoder chatter but NO "output connection opened" marker.
         argv_prefix, env = _fake_args([
-            {"type": "stderr", "line": "starting up..."},
+            {"type": "stderr", "line": "[h264 @ 0x1] No start code is found."},
             {"type": "sleep", "seconds": 5},
         ])
         cfg = _config()
@@ -288,10 +291,10 @@ async def test_starting_times_out_to_error_if_no_streaming_signal():
                 break
             await asyncio.sleep(0.05)
         assert streamer.status().state == "ERROR"
-        # No decode/RTMP clue in stderr → ambiguous, so the message must name
-        # BOTH possible causes (camera and stream key), not assert one.
         err = (streamer.status().last_error or "").lower()
-        assert "camera" in err and "stream key" in err
+        # Point at the stream key / YouTube; must NOT blame the camera.
+        assert "stream key" in err
+        assert "camera" not in err
         await streamer.stop()
     finally:
         streamer_mod.STARTING_TIMEOUT_S = original_timeout
@@ -327,14 +330,17 @@ async def test_start_timeout_with_rtmp_error_points_at_youtube():
         streamer_mod.STARTING_TIMEOUT_S = original_timeout
 
 
-async def test_start_timeout_with_decode_error_points_at_camera():
-    """If stderr shows an H.264 decode failure, the timeout error should blame
-    the camera feed, not the stream key."""
+async def test_start_timeout_after_output_opens_blames_camera():
+    """Once the RTMP output has opened (marker printed) but STREAMING is never
+    reached, the timeout means the camera isn't delivering decodable video — so
+    blame the camera feed, not the stream key. Note the decoder 'No start code'
+    line no longer drives the classification; the marker does."""
     from ndi_rmtp import streamer as streamer_mod
     original_timeout = streamer_mod.STARTING_TIMEOUT_S
     streamer_mod.STARTING_TIMEOUT_S = 0.5
     try:
         argv_prefix, env = _fake_args([
+            {"type": "stderr", "line": "[startup] output connection opened"},
             {"type": "stderr", "line": "[h264 @ 0x1] No start code is found."},
             {"type": "sleep", "seconds": 5},
         ])
@@ -350,7 +356,37 @@ async def test_start_timeout_with_decode_error_points_at_camera():
             await asyncio.sleep(0.05)
         assert streamer.status().state == "ERROR"
         err = (streamer.status().last_error or "").lower()
-        assert "camera" in err and "decod" in err
+        assert "camera" in err and "1080p" in err
+        assert "stream key" not in err
+        await streamer.stop()
+    finally:
+        streamer_mod.STARTING_TIMEOUT_S = original_timeout
+
+
+async def test_start_timeout_with_403_classifies_as_rejected():
+    """A 403 during startup (before Output #0) must classify as a rejected key
+    so _supervise suppresses auto-retry."""
+    from ndi_rmtp import streamer as streamer_mod
+    original_timeout = streamer_mod.STARTING_TIMEOUT_S
+    streamer_mod.STARTING_TIMEOUT_S = 0.5
+    try:
+        argv_prefix, env = _fake_args([
+            {"type": "stderr", "line": "[rtmp] Server returned 403 Forbidden"},
+            {"type": "sleep", "seconds": 5},
+        ])
+        cfg = _config()
+        streamer = Streamer(binary_path=Path("unused"), config_getter=lambda: cfg)
+        streamer._spawn_argv = argv_prefix
+        streamer._spawn_env = env
+
+        await streamer.start("SRC", "key", "medium")
+        for _ in range(40):
+            if streamer.status().state == "ERROR":
+                break
+            await asyncio.sleep(0.05)
+        assert streamer.status().state == "ERROR"
+        err = (streamer.status().last_error or "").lower()
+        assert "rejected" in err
         await streamer.stop()
     finally:
         streamer_mod.STARTING_TIMEOUT_S = original_timeout

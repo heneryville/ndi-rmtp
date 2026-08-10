@@ -34,23 +34,29 @@ STREAMING_PATTERNS = (b"Output #0,", b"Stream mapping:")
 # Signals that YouTube/RTMP server refused — do not auto-retry.
 FATAL_PATTERNS = (b"403 Forbidden", b"Invalid stream key", b"Server returned 403")
 
-# A start can stall for two *different* reasons that both surface as "no
-# Output #0 within STARTING_TIMEOUT_S" and look identical in the UI. When we
-# time out we scan the subprocess's stderr for these to point at the real
-# culprit instead of always blaming the camera. (Debugging a live appliance in
-# Aug 2026 wasted hours because the old message — "Timed out waiting for first
-# frame" — asserted a camera problem when the camera was fine and the ward's
-# YouTube key simply wasn't accepting the stream.)
+# ndi-streamer prints this the instant it opens its output — for RTMP that means
+# the handshake to YouTube completed — and BEFORE it blocks waiting for the
+# camera's first frame. Its presence is the clean signal that separates the two
+# ways a start stalls (see _diagnose_start_timeout): if we never see it, the
+# RTMP connect itself hung (stream key already live / wrong — a stall that emits
+# no error of its own); if we see it but never reach STREAMING, the camera side
+# isn't delivering video. Before we tracked this, a stuck RTMP connect was
+# misread as a camera fault because an unrelated "No start code" decoder line
+# happened to be present.
+OUTPUT_OPENED_MARKER = b"output connection opened"
+
+# Concrete libav connection errors — more specific than the silent RTMP hang.
 _RTMP_ERROR_MARKERS = (
     "cannot open connection", "connection refused", "connection reset",
     "broken pipe", "error opening output", "i/o error", "end of file",
 )
-_DECODE_ERROR_MARKERS = (
-    "no start code", "error while decoding", "invalid data found",
-    "non-existing pps", "decode_slice_header error",
-)
 
-STARTING_TIMEOUT_S = 10.0
+# How long a start may sit in STARTING before we give up and diagnose. Generous
+# on purpose: a cold RTMP handshake to YouTube plus the camera's first-keyframe
+# wait can legitimately take double-digit seconds, and the diagnosis at the end
+# is now accurate, so waiting longer beats a premature (and previously wrong)
+# error.
+STARTING_TIMEOUT_S = 30.0
 STOP_GRACE_S = 5.0
 LOG_BUFFER_LINES = 200
 
@@ -427,35 +433,61 @@ class Streamer:
             logger.exception("stderr reader crashed: %s", e)
 
     def _diagnose_start_timeout(self) -> str:
-        """Explain a STARTING timeout using whatever the subprocess printed.
+        """Explain a STARTING timeout from what the subprocess printed.
 
-        Reaching STREAMING requires ndi-streamer to (1) receive+decode a frame
-        AND (2) open its RTMP output — and a stall in either step produces the
-        same 10s timeout. Blaming "first frame" is wrong half the time, so we
-        classify from stderr: explicit RTMP trouble → the ward's YouTube key /
-        network; decode errors → the camera feed; nothing at all → genuinely
-        ambiguous, so name BOTH the camera and the key rather than mislead.
+        Reaching STREAMING takes two steps, in order: ndi-streamer first opens
+        its output (for RTMP, the handshake to YouTube — it prints the
+        OUTPUT_OPENED_MARKER), then it waits for the camera's first frame and
+        writes the stream header ("Output #0,"). A stall in either step hits the
+        same timeout, so we classify by how far it got:
+
+        - Never opened the output → it hung on the RTMP connect. YouTube took
+          the socket but never started publishing — almost always because this
+          ward's stream key is already live (a broadcast left running in YouTube
+          Studio) or is wrong. This stall prints no error of its own.
+        - Opened the output but never reached STREAMING → the camera side isn't
+          delivering decodable video.
         """
         blob = "\n".join(list(self._log_buffer)).lower()
         secs = int(STARTING_TIMEOUT_S)
-        if any(m in blob for m in _RTMP_ERROR_MARKERS):
+
+        # YouTube explicitly rejected the key. Keep "rejected" in the text so
+        # _supervise treats it as fatal and does not auto-retry.
+        if any(m in blob for m in ("403 forbidden", "invalid stream key",
+                                   "server returned 403")):
             return (
-                "Couldn't connect to YouTube's streaming server. Check the "
-                "network connection and this ward's YouTube stream key, then "
-                "try again. If it keeps happening, contact your Stake "
-                "Technology Specialist."
+                "YouTube rejected this ward's stream key. Check the key in "
+                "YouTube Studio, then try again."
             )
-        if any(m in blob for m in _DECODE_ERROR_MARKERS):
+
+        if OUTPUT_OPENED_MARKER.decode() not in blob:
+            # The RTMP output never opened. Prefer a concrete libav connection
+            # error if we have one; otherwise it's the silent "key already
+            # live / in use" hang that used to be misblamed on the camera.
+            if any(m in blob for m in _RTMP_ERROR_MARKERS):
+                return (
+                    "Couldn't reach YouTube's streaming server. Check the "
+                    "internet connection and this ward's stream key, then try "
+                    "again. If it keeps happening, contact your Stake "
+                    "Technology Specialist."
+                )
             return (
-                "The camera is connected but its video isn't decoding. Make "
-                "sure the camera's NDI output is set to 1080p. Contact your "
-                "Stake Technology Specialist if it persists."
+                f"Couldn't go live within {secs} seconds: YouTube accepted the "
+                "connection but never started the broadcast for this ward's "
+                "stream key. That usually means the key is already live (a "
+                "broadcast left running in YouTube Studio) or is in use "
+                "elsewhere — end that broadcast in YouTube Studio, then try "
+                "again. If the key is brand new, double-check it was entered "
+                "correctly."
             )
+
+        # The output opened, so RTMP/the key are fine — the camera side is the
+        # problem: no decodable video arrived before the timeout.
         return (
-            f"The stream didn't start within {secs} seconds. Either the camera "
-            "isn't sending video (check it is powered on and connected) or "
-            "YouTube isn't accepting this ward's stream key. Contact your "
-            "Stake Technology Specialist."
+            "Connected to YouTube, but no video arrived from the camera within "
+            f"{secs} seconds. Make sure the camera is powered on and connected "
+            "and that its NDI output is set to 1080p. Contact your Stake "
+            "Technology Specialist if it persists."
         )
 
     async def _starting_watchdog(self) -> None:

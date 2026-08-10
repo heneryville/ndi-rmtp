@@ -1,8 +1,62 @@
 diff --git a/src/ffmpeg_output.c b/src/ffmpeg_output.c
-index 0a91d62..9c9b4f6 100644
+index 0a91d62..a573f1a 100644
 --- a/src/ffmpeg_output.c
 +++ b/src/ffmpeg_output.c
-@@ -107,7 +107,7 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
+@@ -20,15 +20,37 @@ new_ffmpeg_output_ctx()
+     return ctx;
+ }
+ 
++// Cleanly finalize the output before freeing it: flush the muxer and write the
++// container trailer, then close the I/O and free the format context. For RTMP
++// the trailer is the FCUnpublish/end-of-stream that tells YouTube the broadcast
++// ended, so it releases the stream key instead of leaving it "already started"
++// for the next connect. Best-effort — on a dead connection av_write_trailer
++// fails fast rather than hanging, and the caller's stop path still has its
++// SIGKILL fallback. Uses the output teardown (avio_closep + free_context), NOT
++// avformat_close_input, which is for *input* contexts and skips the trailer.
++static void
++ffmpeg_output_teardown(FFmpegOutputCtx *ctx)
++{
++    if (ctx->o_ctx && ctx->header_written) {
++        av_write_trailer(ctx->o_ctx);
++        ctx->header_written = 0;
++    }
++    if (ctx->o_ctx) {
++        if (ctx->o_ctx->pb && !(ctx->o_ctx->oformat->flags & AVFMT_NOFILE))
++            avio_closep(&ctx->o_ctx->pb);
++        avformat_free_context(ctx->o_ctx);
++        ctx->o_ctx = NULL;
++    }
++}
++
+ int
+ free_ffmpeg_output_ctx(FFmpegOutputCtx **ctx)
+ {
++    ffmpeg_output_teardown(*ctx);
+     if ((*ctx)->audio_codec_ctx)
+         avcodec_free_context(&(*ctx)->audio_codec_ctx);
+     if ((*ctx)->video_codec_ctx)
+         avcodec_free_context(&(*ctx)->video_codec_ctx);
+-    if ((*ctx)->o_ctx)
+-        avformat_close_input(&(*ctx)->o_ctx);
+ 
+     free(*ctx);
+     *ctx = NULL;
+@@ -60,12 +82,11 @@ ffmpeg_output_init(FFmpegOutputCtx *ctx, const char *format, const char *output)
+ void
+ ffmpeg_output_close(FFmpegOutputCtx *ctx)
+ {
++    ffmpeg_output_teardown(ctx);
+     if (ctx->audio_codec_ctx)
+         avcodec_free_context(&ctx->audio_codec_ctx);
+     if (ctx->video_codec_ctx)
+         avcodec_free_context(&ctx->video_codec_ctx);
+-    if (ctx->o_ctx)
+-        avformat_close_input(&ctx->o_ctx);
+ 
+     ctx->output = NULL;
+ }
+@@ -107,7 +128,7 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
      c_ctx->height = height;
      c_ctx->framerate = framerate;
      c_ctx->bit_rate = bitrate;
@@ -11,7 +65,7 @@ index 0a91d62..9c9b4f6 100644
  
      if (ctx->o_ctx->oformat->flags & AVFMT_GLOBALHEADER)
          c_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-@@ -119,6 +119,25 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
+@@ -119,6 +140,25 @@ ffmpeg_output_setup_video(FFmpegOutputCtx *ctx, const char *encoder_name,
  
      if (strcmp(encoder_name, "libx264") == 0) {
          av_dict_set(&codec_options, "preset", "veryfast", 0);
@@ -37,7 +91,17 @@ index 0a91d62..9c9b4f6 100644
      }
  
      if (codec->id == AV_CODEC_ID_H264) {
-@@ -340,6 +359,18 @@ send_packets(const FFmpegOutputCtx *ctx, AVCodecContext *codec_context,
+@@ -278,6 +318,9 @@ ffmpeg_output_write_header(FFmpegOutputCtx *ctx, AVDictionary **av_opts)
+     if (ret < 0) {
+         av_error_fmt(ctx->error_str, "could not write header!", ret);
+     }
++    else {
++        ctx->header_written = 1;
++    }
+     return ret;
+ }
+ 
+@@ -340,6 +383,18 @@ send_packets(const FFmpegOutputCtx *ctx, AVCodecContext *codec_context,
                      pkt->dts, codec_context->time_base,
                      ctx->o_ctx->streams[stream_index]->time_base);
  
@@ -56,6 +120,22 @@ index 0a91d62..9c9b4f6 100644
              ret = av_interleaved_write_frame(ctx->o_ctx, pkt);
              if (ret < 0) {
                  av_error_fmt(ctx->error_str,
+diff --git a/src/ffmpeg_output.h b/src/ffmpeg_output.h
+index 488fb30..f6f625d 100644
+--- a/src/ffmpeg_output.h
++++ b/src/ffmpeg_output.h
+@@ -16,6 +16,11 @@ typedef struct FFmpegOutputCtx {
+     int audio_stream_index;
+     int video_stream_index;
+     const char *output;
++    // Set once avformat_write_header() succeeds; gates av_write_trailer() on
++    // teardown so we only send the RTMP end-of-stream (FCUnpublish) when a
++    // session was actually opened. Writing the trailer is what tells YouTube
++    // the broadcast ended and lets it release the stream key cleanly.
++    int header_written;
+     char *error_str;
+ } FFmpegOutputCtx;
+ 
 diff --git a/src/frame_converter.c b/src/frame_converter.c
 index bd54194..7357901 100644
 --- a/src/frame_converter.c
@@ -682,3 +762,20 @@ index 399a4eb..6964045 100644
              break;
          }
      }
+diff --git a/src/util.c b/src/util.c
+index d4696a3..28e2913 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -91,6 +91,12 @@ eh_init()
+         sigemptyset(&action.sa_mask);
+         action.sa_flags = 0;
+         sigaction(SIGINT, &action, NULL);
++        // Also catch SIGTERM: the control plane stops the stream with SIGTERM
++        // (streamer.py stop()), and without this it would be an uncaught hard
++        // kill — the main loop would never exit cleanly, so av_write_trailer()
++        // would never run and YouTube would never get the end-of-stream. The
++        // 5s SIGKILL fallback in stop() still covers a wedged teardown.
++        sigaction(SIGTERM, &action, NULL);
+         eh_initialized = 1;
+     }
+ }

@@ -408,6 +408,12 @@ class Streamer:
             async for raw in self._proc.stderr:
                 line = raw.decode("utf-8", errors="replace").rstrip("\n")
                 self._log_buffer.append(line)
+                # Forward the opt-in A/V-sync instrumentation to the journal so
+                # `journalctl -u ndi-rmtp | grep avsync` captures it. ndi-streamer
+                # only emits these lines when NDI_RMTP_AVSYNC_DEBUG is set in its
+                # environment, so this is a no-op in normal operation.
+                if b"[avsync]" in raw:
+                    logger.info("%s", line)
                 if self._sm.state == State.STARTING and any(p in raw for p in STREAMING_PATTERNS):
                     async with self._lock:
                         if self._sm.state == State.STARTING:

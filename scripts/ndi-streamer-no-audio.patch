@@ -57,18 +57,68 @@ index 0a91d62..9c9b4f6 100644
              if (ret < 0) {
                  av_error_fmt(ctx->error_str,
 diff --git a/src/frame_converter.c b/src/frame_converter.c
-index bd54194..0913f13 100644
+index bd54194..7357901 100644
 --- a/src/frame_converter.c
 +++ b/src/frame_converter.c
-@@ -76,6 +76,7 @@ void
+@@ -76,7 +76,44 @@ void
  fc_reset(FrameConverterCtx *ctx)
  {
      ctx->frame_index = 0;
 +    ctx->audio_pts_samples = 0;
      ctx->start_ts = get_current_ts_usec();
++    ctx->ts_epoch = 0;
++    ctx->ts_epoch_set = 0;
++    ctx->last_video_pts = -1;
++    ctx->audio_pts_base_us = 0;
++    ctx->audio_base_set = 0;
++}
++
++int64_t
++fc_next_video_pts(FrameConverterCtx *ctx, NDIlib_video_frame_v2_t *in_frame)
++{
++    // Prefer the source timecode (capture instant); fall back to the receiver
++    // timestamp, then to a synthetic frame-count clock if neither is provided.
++    int64_t tc = in_frame->timecode;
++    if (tc == NDIlib_send_timecode_synthesize)
++        tc = in_frame->timestamp;
++    if (!ctx->ts_epoch_set && tc != NDIlib_recv_timestamp_undefined) {
++        ctx->ts_epoch = tc;
++        ctx->ts_epoch_set = 1;
++    }
++
++    int64_t pts;
++    if (ctx->ts_epoch_set && tc != NDIlib_recv_timestamp_undefined) {
++        pts = (tc - ctx->ts_epoch) / 10; // 100 ns -> us
++    }
++    else {
++        pts = (int64_t)ctx->frame_index * AV_TIME_BASE
++                * in_frame->frame_rate_D / in_frame->frame_rate_N;
++    }
++
++    // Encoders require strictly increasing pts; guard against any timecode
++    // stall/regression (and keep the fallback path monotonic).
++    if (pts <= ctx->last_video_pts)
++        pts = ctx->last_video_pts + 1;
++    ctx->last_video_pts = pts;
++    ctx->frame_index++;
++    return pts;
  }
  
-@@ -122,7 +123,7 @@ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+ AVFrame *
+@@ -109,10 +146,8 @@ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+     sws_scale(ctx->sws_ctx, (const uint8_t *const *)src, src_stride, 0, in_frame->yres, out_frame->data,
+               out_frame->linesize);
+ 
+-    out_frame->pkt_dts = get_current_ts_usec() - ctx->start_ts;
+-    out_frame->pts = ctx->frame_index * AV_TIME_BASE * in_frame->frame_rate_D
+-                     / in_frame->frame_rate_N;
+-    ctx->frame_index++;
++    out_frame->pts = fc_next_video_pts(ctx, in_frame);
++    out_frame->pkt_dts = out_frame->pts;
+ 
+     // AV_PICTURE_TYPE_I; // force infra
+     out_frame->pict_type = AV_PICTURE_TYPE_NONE;
+@@ -122,7 +157,7 @@ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
  
  AVFrame *
  fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
@@ -77,7 +127,7 @@ index bd54194..0913f13 100644
  {
      int ret;
      int nb_samples = codec_ctx->frame_size;
-@@ -144,8 +145,11 @@ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+@@ -144,8 +179,11 @@ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
      av_frame_get_buffer(out_frame, 0);
  
      if (!in_frame) { // flush
@@ -85,34 +135,53 @@ index bd54194..0913f13 100644
 -        out_frame->pts = swr_next_pts(ctx->swr_context, INT64_MIN);
 +        int64_t pts_increment_us =
 +                (int64_t)nb_samples * 1000000 / codec_ctx->sample_rate;
-+        out_frame->pkt_dts = ctx->audio_pts_samples;
-+        out_frame->pts = ctx->audio_pts_samples;
++        out_frame->pkt_dts = ctx->audio_pts_base_us + ctx->audio_pts_samples;
++        out_frame->pts = ctx->audio_pts_base_us + ctx->audio_pts_samples;
 +        ctx->audio_pts_samples += pts_increment_us;
  
          ret = swr_convert(ctx->swr_context, out_frame->data,
                            out_frame->nb_samples, NULL, 0);
-@@ -196,8 +200,14 @@ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+@@ -196,8 +234,33 @@ fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
          return NULL;
      }
  
 -    out_frame->pkt_dts = get_current_ts_usec() - ctx->start_ts;
 -    out_frame->pts = swr_next_pts(ctx->swr_context, INT64_MIN);
++    // Anchor audio to the shared timecode epoch: the first audio input frame's
++    // timecode fixes where audio starts relative to video's zero point. From
++    // there the sample counter (which is exact and monotonic for 48k->48k) does
++    // the rest. This is what keeps audio and video from drifting apart at start.
++    if (!ctx->audio_base_set) {
++        int64_t tc = in_frame->timecode;
++        if (tc == NDIlib_send_timecode_synthesize)
++            tc = in_frame->timestamp;
++        if (!ctx->ts_epoch_set && tc != NDIlib_recv_timestamp_undefined) {
++            ctx->ts_epoch = tc;
++            ctx->ts_epoch_set = 1;
++        }
++        ctx->audio_pts_base_us =
++                (ctx->ts_epoch_set && tc != NDIlib_recv_timestamp_undefined)
++                        ? (tc - ctx->ts_epoch) / 10
++                        : 0;
++        ctx->audio_base_set = 1;
++    }
++
 +    // Audio codec_ctx->time_base is set to AV_TIME_BASE_Q ({1, 1000000})
 +    // by the codec setup, not {1, sample_rate}. So pts is in microseconds:
 +    // per AAC frame, pts advances by nb_samples * 1e6 / sample_rate.
 +    int64_t pts_increment_us =
 +            (int64_t)nb_samples * 1000000 / codec_ctx->sample_rate;
-+    out_frame->pkt_dts = ctx->audio_pts_samples;
-+    out_frame->pts = ctx->audio_pts_samples;
++    out_frame->pkt_dts = ctx->audio_pts_base_us + ctx->audio_pts_samples;
++    out_frame->pts = ctx->audio_pts_base_us + ctx->audio_pts_samples;
 +    ctx->audio_pts_samples += pts_increment_us;
  
      ret = swr_convert(ctx->swr_context, out_frame->data, out_frame->nb_samples,
                        NULL, 0);
 diff --git a/src/frame_converter.h b/src/frame_converter.h
-index 5d5a99c..d36c661 100644
+index 5d5a99c..084eca3 100644
 --- a/src/frame_converter.h
 +++ b/src/frame_converter.h
-@@ -21,6 +21,11 @@ typedef struct FrameConverterCtx {
+@@ -21,6 +21,23 @@ typedef struct FrameConverterCtx {
      int64_t frame_index;
      int64_t start_ts;
  
@@ -121,10 +190,35 @@ index 5d5a99c..d36c661 100644
 +    // fc_reset() to keep audio aligned with a fresh RTMP session.
 +    int64_t audio_pts_samples;
 +
++    // Shared A/V timecode epoch (100 ns units) captured from the first frame
++    // of EITHER stream after fc_reset(). Both video and audio PTS are measured
++    // relative to this single epoch so the two streams share one zero point.
++    // Without it each stream resets its PTS to 0 at its own first frame; since
++    // HX/HX3 video must wait for a keyframe while audio flows immediately, that
++    // startup gap becomes a permanent A/V offset (video runs ahead of audio).
++    int64_t ts_epoch;          // 100 ns; NDI timecode of first frame post-reset
++    int ts_epoch_set;
++    int64_t last_video_pts;    // us; monotonic guard for timecode-derived pts
++    int64_t audio_pts_base_us; // us; audio's start offset from ts_epoch
++    int audio_base_set;
++
      char *error_str;
  } FrameConverterCtx;
  
-@@ -39,5 +44,5 @@ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+@@ -33,11 +50,18 @@ free_frame_converter_ctx(FrameConverterCtx **ctx);
+ void
+ fc_reset(FrameConverterCtx *);
+ 
++// Compute the next monotonic video PTS (microseconds) for `in_frame`, anchored
++// to the shared timecode epoch (see FrameConverterCtx). Also advances
++// frame_index. Used by both the live and sacrament video paths so their PTS
++// stay on one clock.
++int64_t
++fc_next_video_pts(FrameConverterCtx *ctx, NDIlib_video_frame_v2_t *in_frame);
++
+ AVFrame *
+ fc_ndi_video_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
+                               NDIlib_video_frame_v2_t *in_frame);
  
  AVFrame *
  fc_ndi_audio_frame_to_avframe(FrameConverterCtx *ctx, AVCodecContext *codec_ctx,
@@ -133,13 +227,14 @@ index 5d5a99c..d36c661 100644
  #endif
 \ No newline at end of file
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..52c6e30 100644
+index 399a4eb..622aa38 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
-@@ -5,6 +5,14 @@
+@@ -5,12 +5,22 @@
  // https://opensource.org/licenses/MIT.
  
  #include <stdio.h>
++#include <stdlib.h>
 +#include <signal.h>
 +#include <string.h>
 +#include <unistd.h>
@@ -151,7 +246,14 @@ index 399a4eb..52c6e30 100644
  
  #include <Processing.NDI.Lib.h>
  
-@@ -22,8 +30,121 @@ typedef struct AppOptions {
+ #include "ffmpeg_output.h"
+ #include "frame_converter.h"
+ #include "util.h"
++#include "common.h"
+ 
+ #define NDI_RECV_TIMEOUT 2000
+ 
+@@ -22,8 +32,121 @@ typedef struct AppOptions {
      char audio_encoder[40];
      int video_bitrate;
      int audio_bitrate;
@@ -273,7 +375,7 @@ index 399a4eb..52c6e30 100644
  AppOptions
  read_params(int argc, char **argv);
  
-@@ -39,7 +160,7 @@ main(int argc, char **argv)
+@@ -39,7 +162,7 @@ main(int argc, char **argv)
          printf("[ERROR] codec '%s' not found\n", opts.video_encoder);
          return 1;
      }
@@ -282,7 +384,7 @@ index 399a4eb..52c6e30 100644
          printf("[ERROR] codec '%s' not found\n", opts.audio_encoder);
          return 1;
      }
-@@ -58,10 +179,14 @@ main(int argc, char **argv)
+@@ -58,10 +181,14 @@ main(int argc, char **argv)
          source.p_url_address = opts.ndi_input_addr;
      }
  
@@ -298,7 +400,7 @@ index 399a4eb..52c6e30 100644
      };
  
      NDIlib_recv_instance_t recv = NDIlib_recv_create_v3(&recv_create_desc);
-@@ -71,6 +196,12 @@ main(int argc, char **argv)
+@@ -71,6 +198,12 @@ main(int argc, char **argv)
          return 1;
      }
  
@@ -311,7 +413,7 @@ index 399a4eb..52c6e30 100644
      char ffmpeg_output_format[30];
      if (strcmp(opts.output_format, "rtmp") == 0) {
          snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
-@@ -107,7 +238,11 @@ main(int argc, char **argv)
+@@ -107,7 +240,11 @@ main(int argc, char **argv)
          }
  
          NDIlib_video_frame_v2_t v_frame;
@@ -324,7 +426,7 @@ index 399a4eb..52c6e30 100644
  
          int width = 0, height = 0;
          AVRational frame_rate = {};
-@@ -127,10 +262,17 @@ main(int argc, char **argv)
+@@ -127,10 +264,17 @@ main(int argc, char **argv)
  
          ffmpeg_output_close_codecs(fa_ctx);
  
@@ -345,11 +447,65 @@ index 399a4eb..52c6e30 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -140,16 +282,47 @@ main(int argc, char **argv)
+@@ -139,17 +283,113 @@ main(int argc, char **argv)
+ 
          fc_reset(fc_ctx);
  
++        // [avsync-diag] Opt-in, stderr-only A/V-sync instrumentation (no
++        // behaviour change). Enable by setting NDI_RMTP_AVSYNC_DEBUG in the
++        // environment (off by default). Reports received-vs-nominal fps (drop
++        // detector), the NDI timecode/timestamp on the first frames of each
++        // stream, and the running video/audio PTS + their skew — handy for
++        // re-checking A/V alignment after any change to the PTS clocks. The app
++        // forwards these lines to the journal (see streamer.py _read_stderr).
++        int diag_on = getenv("NDI_RMTP_AVSYNC_DEBUG") != NULL;
++        int64_t diag_start_us = get_current_ts_usec();
++        int64_t diag_last_log_us = diag_start_us;
++        long diag_vid_recv = 0;
++        long diag_aud_recv = 0;
++        long diag_aud_samples_in = 0;
++        int diag_aud_sr = 0;
++        int diag_vid_logged = 0;
++        int diag_aud_logged = 0;
++
          while (eh_alive()) {
 -            NDIlib_frame_type_e res = NDIlib_recv_capture_v2(
++            // [avsync-diag] periodic drop + clock-skew report
++            if (diag_on) {
++                int64_t now_us = get_current_ts_usec();
++                if (now_us - diag_last_log_us >= 5000000) {
++                    double elapsed = (double)(now_us - diag_start_us) / 1e6;
++                    double nom_fps = frame_rate.num
++                            ? (double)frame_rate.num / (double)frame_rate.den
++                            : 0.0;
++                    double recv_fps
++                            = elapsed > 0 ? (double)diag_vid_recv / elapsed : 0.0;
++                    double expected_vid = nom_fps * elapsed;
++                    double vid_drop_pct = expected_vid > 0
++                            ? 100.0 * (expected_vid - (double)diag_vid_recv)
++                                    / expected_vid
++                            : 0.0;
++                    double aud_in_s = diag_aud_sr > 0
++                            ? (double)diag_aud_samples_in / (double)diag_aud_sr
++                            : 0.0;
++                    double vid_pts_s
++                            = (double)fc_ctx->last_video_pts / 1e6;
++                    double aud_pts_s
++                            = (double)(fc_ctx->audio_pts_base_us
++                                       + fc_ctx->audio_pts_samples)
++                            / 1e6;
++                    fprintf(stderr,
++                            "[avsync] t=%.1fs vid_recv=%ld recv_fps=%.2f "
++                            "nom_fps=%.2f vid_drop~%.1f%% aud_recv=%ld "
++                            "aud_in=%.2fs vid_pts=%.3fs aud_pts=%.3fs "
++                            "skew(v-a)=%.3fs\n",
++                            elapsed, diag_vid_recv, recv_fps, nom_fps,
++                            vid_drop_pct, diag_aud_recv, aud_in_s, vid_pts_s,
++                            aud_pts_s, vid_pts_s - aud_pts_s);
++                    diag_last_log_us = now_us;
++                }
++            }
++
 +            NDIlib_frame_type_e res = NDIlib_recv_capture_v3(
                      recv, &v_frame, &a_frame, NULL, NDI_RECV_TIMEOUT);
  
@@ -365,6 +521,19 @@ index 399a4eb..52c6e30 100644
  
 -                AVFrame *frame = fc_ndi_video_frame_to_avframe(
 -                        fc_ctx, fa_ctx->video_codec_ctx, &v_frame);
++                // [avsync-diag]
++                diag_vid_recv++;
++                if (diag_on && diag_vid_logged < 5) {
++                    fprintf(stderr,
++                            "[avsync] vid#%ld timecode=%lld timestamp=%lld "
++                            "%dx%d fr=%d/%d\n",
++                            diag_vid_recv, (long long)v_frame.timecode,
++                            (long long)v_frame.timestamp, v_frame.xres,
++                            v_frame.yres, v_frame.frame_rate_N,
++                            v_frame.frame_rate_D);
++                    diag_vid_logged++;
++                }
++
 +                AVFrame *frame;
 +                if (sacrament_active) {
 +                    // Lazy-load the image now that we know encoder dims.
@@ -381,10 +550,9 @@ index 399a4eb..52c6e30 100644
 +                        // Clone shares the underlying buffer (refcount +1); send_video_frame
 +                        // will av_frame_unref it without freeing the cached original.
 +                        frame = av_frame_clone(sacrament_frame);
-+                        // Use the NDI frame's timing so PTS stays monotonic.
-+                        frame->pts = fc_ctx->frame_index * AV_TIME_BASE
-+                                * v_frame.frame_rate_D / v_frame.frame_rate_N;
-+                        fc_ctx->frame_index++;
++                        // Same shared-epoch clock as the live path so PTS stays
++                        // monotonic and A/V-aligned across sacrament toggles.
++                        frame->pts = fc_next_video_pts(fc_ctx, &v_frame);
 +                    } else {
 +                        // No image loaded — fall through to live.
 +                        frame = fc_ndi_video_frame_to_avframe(
@@ -397,12 +565,25 @@ index 399a4eb..52c6e30 100644
  
                  NDIlib_recv_free_video_v2(recv, &v_frame);
  
-@@ -158,18 +331,28 @@ main(int argc, char **argv)
+@@ -158,18 +398,41 @@ main(int argc, char **argv)
                      break;
                  }
              }
 -            else if (res == NDIlib_frame_type_audio) {
 +            else if (res == NDIlib_frame_type_audio && !opts.no_audio) {
++                // [avsync-diag]
++                diag_aud_recv++;
++                diag_aud_samples_in += a_frame.no_samples;
++                diag_aud_sr = a_frame.sample_rate;
++                if (diag_on && diag_aud_logged < 5) {
++                    fprintf(stderr,
++                            "[avsync] aud#%ld timecode=%lld timestamp=%lld "
++                            "sr=%d ch=%d n=%d\n",
++                            diag_aud_recv, (long long)a_frame.timecode,
++                            (long long)a_frame.timestamp, a_frame.sample_rate,
++                            a_frame.no_channels, a_frame.no_samples);
++                    diag_aud_logged++;
++                }
 +                // During sacrament OR audio mute, send silence (preserves
 +                // stream shape, no muxer hiccup) instead of skipping audio
 +                // frames entirely.
@@ -428,7 +609,7 @@ index 399a4eb..52c6e30 100644
  
                  while ((frame = fc_ndi_audio_frame_to_avframe(
                                  fc_ctx, fa_ctx->audio_codec_ctx, NULL))
-@@ -189,6 +372,8 @@ main(int argc, char **argv)
+@@ -189,6 +452,8 @@ main(int argc, char **argv)
  
      free_frame_converter_ctx(&fc_ctx);
  
@@ -437,7 +618,7 @@ index 399a4eb..52c6e30 100644
      NDIlib_recv_destroy(recv);
  
      NDIlib_destroy();
-@@ -279,6 +464,11 @@ const ProgramOption options[] = {
+@@ -279,6 +544,11 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
@@ -449,7 +630,7 @@ index 399a4eb..52c6e30 100644
      { NULL, NULL, 0 },
  };
  
-@@ -298,6 +488,7 @@ read_params(int argc, char **argv)
+@@ -298,6 +568,7 @@ read_params(int argc, char **argv)
      sprintf(res.output, "rtsp://127.0.0.1:8554/live.sdp");
      res.video_bitrate = 30000000;
      res.audio_bitrate = 320000;
@@ -457,7 +638,7 @@ index 399a4eb..52c6e30 100644
  
      for (; (c = op_parse(argc, argv, op_ctx, &opt)) != -1;) {
          switch (c) {
-@@ -352,6 +543,33 @@ read_params(int argc, char **argv)
+@@ -352,6 +623,33 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }

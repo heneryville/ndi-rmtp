@@ -82,6 +82,11 @@ class Config:
     stream: StreamConfig = field(default_factory=StreamConfig)
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     ptz: PtzConfig = field(default_factory=PtzConfig)
+    # A hand-incremented "config generation" stamp, bumped on every deploy (see
+    # deploy.md) and shown in the UI so an operator can tell at a glance whether
+    # the appliance actually picked up the latest deployed config. Defaults to 0
+    # for older/hand-edited configs that predate this field.
+    config_version: int = 0
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -96,6 +101,7 @@ class Config:
             stream=StreamConfig(**stream_data),
             advanced=AdvancedConfig(**data.get("advanced", {})),
             ptz=PtzConfig(**ptz_data),
+            config_version=data.get("config_version", 0),
         )
 
     def save(self, path: Path) -> None:

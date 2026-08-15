@@ -46,6 +46,37 @@ def test_load_round_trips(tmp_path):
     assert loaded.stream.quality == "high"
 
 
+def test_load_reads_config_version(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'config_version = 7\n'
+        "[auth]\n"
+        'username = "admin"\n'
+        'password = "pw"\n'
+        "enabled = false\n"
+    )
+    cfg = Config.load(path)
+    assert cfg.config_version == 7
+
+
+def test_config_version_defaults_to_zero_when_absent(tmp_path):
+    # A config file with no config_version key (e.g. a hand-edited or older
+    # config) must still load, defaulting the version to 0.
+    path = tmp_path / "config.toml"
+    cfg, _ = Config.bootstrap(path)
+    assert cfg.config_version == 0
+
+
+def test_save_round_trips_config_version(tmp_path):
+    # The app rewrites config on start (last_source/quality); the version must
+    # survive that round-trip so the deployed number isn't silently reset.
+    path = tmp_path / "config.toml"
+    cfg, _ = Config.bootstrap(path)
+    cfg.config_version = 12
+    cfg.save(path)
+    assert Config.load(path).config_version == 12
+
+
 def test_active_returns_none_when_unset(tmp_path):
     path = tmp_path / "config.toml"
     cfg, _ = Config.bootstrap(path)

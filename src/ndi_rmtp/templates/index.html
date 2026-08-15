@@ -11,10 +11,14 @@
 <body data-state="IDLE" data-muted="false" data-sacrament="false">
   <header>
     <h1>NDI → YouTube Relay</h1>
+    <!-- Drives the every-2s /api/status poll (htmx). Its visible text is the
+         config-version stamp; the poll response is handled in JS and updates the
+         status card, not this badge (hx-swap="none"), so the version stays put. -->
     <div id="state-badge"
+         title="Config generation — increments on each deploy. Confirms this appliance loaded the latest config."
          hx-get="/api/status"
          hx-trigger="load, every 2s"
-         hx-swap="none">…</div>
+         hx-swap="none">v{{ config.config_version }}</div>
   </header>
 
   <div id="flash" class="flash flash-error" hidden></div>

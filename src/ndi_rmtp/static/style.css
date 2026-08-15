@@ -57,7 +57,8 @@ header {
   border-bottom: 1px solid var(--border);
 }
 header h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
-#state-badge { font-size: 0.8rem; color: var(--muted); }
+/* Repurposed as the deploy-version stamp (upper-right): small, middling gray. */
+#state-badge { font-size: 0.72rem; color: #808690; }
 
 main {
   max-width: 960px;
@@ -423,6 +424,7 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   color: #6b7280;
   font-size: 0.85rem;
 }
+
 
 /* -------------------------------------------------------------------------
  * Desktop: side-by-side preview + presets when there's room.

@@ -75,6 +75,28 @@ def test_index_renders_when_authed(client):
     assert "text/html" in r.headers["content-type"]
 
 
+def test_index_shows_config_version(tmp_path, streamer, discovery):
+    # The deployed config's version stamp must be visible on the home page so an
+    # operator can confirm the appliance picked up the latest deploy.
+    config = Config(
+        auth=AuthConfig(username="admin", password="hunter2"),
+        stream=StreamConfig(
+            wards=[Ward(name="Primary", key="abc-key")],
+            active_ward="Primary",
+            last_source="SRC",
+        ),
+        advanced=AdvancedConfig(),
+        config_version=42,
+    )
+    config_path = tmp_path / "config.toml"
+    config.save(config_path)
+    app = build_app(config_path=config_path, streamer=streamer, discovery=discovery)
+    client = TestClient(app)
+    r = client.get("/", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    assert "v42" in r.text
+
+
 def test_api_status_returns_shape(client):
     r = client.get("/api/status", headers=_basic("admin", "hunter2"))
     assert r.status_code == 200

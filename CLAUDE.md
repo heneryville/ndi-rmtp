@@ -44,6 +44,20 @@ catches that import error so the app degrades gracefully. **Don't** make
 cyndilib a hard import in `app.py` or `streamer.py`; the wrapping in
 `bootstrap.py` is load-bearing.
 
+## Deploying to a Pi appliance
+
+Follow [`deploy.md`](deploy.md) — the canonical deploy runbook (rsync +
+`install.sh`, the vendored-`ndi_streamer` reset gotcha, and verification). SSH
+hosts/credentials are in [`ssh.md`](ssh.md); first-time provisioning is in
+`docs/pi-setup.md`.
+
+**Every config deploy must bump `config_version`** (first line of
+`config.<south|north>.toml`) — step 0 of `deploy.md`. It renders in the web-UI
+footer as `config vN` so an operator can confirm the appliance actually loaded
+the latest config; a stale number is the tell that a config edit never reached
+the Pi. `Config.load` defaults it to `0` for older configs and `save()`
+round-trips it.
+
 ## Architecture, the non-obvious parts
 
 ### Three different processes interact

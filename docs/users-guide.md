@@ -45,12 +45,17 @@ The main things on the page:
   already set for you.** Each building has its own appliance and is
   pre-configured with the wards that meet in it. Only change it if you
   know you're streaming for a different ward today.
+- **Starting camera position** — the preset the camera snaps to the
+  moment you hit Start, so viewers see a good framing right away
+  instead of whatever the camera was last pointed at.
 - **Quality** — leave on **high** unless you notice viewers complaining
   about buffering. (More on this below.)
-- **Status: IDLE** at the bottom — means nothing is streaming yet.
-- **CPU temperature chip** — shows how hard the appliance is working.
-  Green is fine. Yellow means watch it. Red means it's overheating
-  (rare — call the Stake Tech Specialist).
+- The big blue **▶ Start Stream** button is pinned to the bottom of the
+  screen, always within thumb's reach on a phone.
+
+Nothing else is on this page on purpose — no preview, no camera
+controls — so there's nothing to distract you from checking these four
+things before you go live.
 
 ---
 
@@ -59,20 +64,26 @@ The main things on the page:
 When you're ready to go live on YouTube, click the big blue **▶ Start
 Stream** button.
 
-After a few seconds the page changes:
+After a few seconds the page switches to the streaming view:
 
 ![The page while a broadcast is live](users-guide-screenshots/01-streaming.png)
 
-What changed:
+What you'll see:
 
-- **STATUS** now says **STREAMING** with a running clock showing how
-  long you've been live.
-- The big blue Start button is replaced by **🔇 Mute audio**,
-  **Sacrament**, and **■ Stop** buttons.
-- A **PTZ CAMERA** card appears with a live preview of what the camera
-  is seeing — this is the same picture YouTube viewers see.
-- The NDI Source and Ward dropdowns become greyed-out — they're locked
-  while you're live so you can't accidentally change them mid-meeting.
+- A compact bar at the top showing the **ward**, **quality**, and a
+  running **uptime clock**, with a pulsing green dot to confirm you're
+  live.
+- A full-width **camera preview** — this is the same picture YouTube
+  viewers see — with the presets grid and a collapsible **Manual
+  control** section right below it.
+- A **Status** card with the CPU temperature. Green is fine. Yellow
+  means watch it. Red means it's overheating (rare — call the Stake
+  Tech Specialist).
+- The setup form is hidden while you're live, so nothing can be
+  accidentally changed mid-meeting. To change source, ward, or the
+  starting camera position, stop the stream first.
+- **🔇 Mute**, **Sacrament**, and **■ Stop** are pinned to the bottom
+  of the screen.
 
 Check your YouTube Studio (on a separate device or tab) and confirm
 the broadcast is showing up there. It can take 10–20 seconds for

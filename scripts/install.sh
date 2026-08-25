@@ -139,11 +139,15 @@ install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$SVC_CFG_DIR"
 
 # --- Deployment-specific config ---
 # Two appliances exist (south and north building), each with its own
-# ward roster + stream keys. Ask which we're installing onto. The
-# choice is the SHIPPED config from the repo (config.south.toml /
-# config.north.toml); it gets copied to the service user's
-# config.toml. Re-running install.sh asks again — pick `skip` to
-# preserve any in-place UI edits.
+# ward roster + stream keys. Ask which we're installing onto. Stream
+# keys are secret and NOT tracked in git: the real config lives in the
+# working clone as config.<south|north>.toml (git-ignored). If that file
+# is present it gets copied to the service user's config.toml; otherwise
+# we fall back to the tracked config.<south|north>.example.toml template
+# (placeholder keys) so the service still boots — you then fill in the
+# real keys via the UI or by editing the on-device config.toml.
+# Re-running install.sh asks again — pick `keep` to preserve any
+# in-place UI edits.
 DEPLOYMENT="${NDI_RMTP_DEPLOYMENT:-}"
 if [[ -z "$DEPLOYMENT" ]]; then
   printf "\nWhich deployment is this appliance?\n  [s]outh  -> Jordan Willows 1st/7th + Snow Springs (snowspringssouth.local)\n  [n]orth  -> Jordan Willows 2nd, Lehi 25th, Pioneer Crossing, Sommerset (snowspringsnorth.local)\n  [k]eep   -> leave existing config.toml alone (use this for code-only updates)\nChoose [s/n/k]: "
@@ -158,8 +162,14 @@ fi
 case "$DEPLOYMENT" in
   south|north)
     SRC_CFG="$PROJECT_ROOT/config.$DEPLOYMENT.toml"
-    [[ -f "$SRC_CFG" ]] || { echo "Missing $SRC_CFG"; exit 1; }
-    say "Installing $DEPLOYMENT config -> $SVC_CFG"
+    if [[ -f "$SRC_CFG" ]]; then
+      say "Installing $DEPLOYMENT config -> $SVC_CFG"
+    else
+      SRC_CFG="$PROJECT_ROOT/config.$DEPLOYMENT.example.toml"
+      [[ -f "$SRC_CFG" ]] || { echo "Missing config.$DEPLOYMENT.toml and its .example template"; exit 1; }
+      say "No config.$DEPLOYMENT.toml (secret configs are git-ignored); installing PLACEHOLDER template -> $SVC_CFG"
+      say "  !! Stream keys are placeholders — fill in real YouTube keys via the UI or by editing $SVC_CFG"
+    fi
     install -o "$SVC_USER" -g "$SVC_USER" -m 0600 "$SRC_CFG" "$SVC_CFG"
     ;;
   keep)

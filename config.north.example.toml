@@ -1,0 +1,78 @@
+# TEMPLATE — copy this to `config.north.toml` (which is git-ignored) and fill in
+# the real values. The live `config.*.toml` files hold YouTube stream keys and
+# are intentionally NOT tracked in git; only these `.example` templates are.
+#
+#   cp config.north.example.toml config.north.toml
+#   # then edit the `key` fields below and (optionally) the auth password.
+#
+# See CLAUDE.md ("Config schema gotchas") and deploy.md for details.
+
+# Config generation stamp. Bump this by 1 on EVERY deploy (see deploy.md); it
+# renders faintly in the web UI footer as "config vN" so you can confirm at a
+# glance that the appliance actually loaded the latest deployed config.
+config_version = 1
+
+[auth]
+username = "admin"
+# Leave empty to have the app generate a random password on first run, or set
+# your own. Only used when `enabled = true`.
+password = ""
+enabled = false
+
+[stream]
+last_source = ""
+active_ward = "Test Ward"
+rtmp_url = "rtmp://a.rtmp.youtube.com/live2"
+quality = "high"
+
+# Each ward's `key` is its YouTube stream key (YouTube Studio -> Go Live ->
+# Stream key). sacrament_image points at an SVG/PNG in the sacrament/ dir;
+# leave empty to disable sacrament mode for that ward.
+[[stream.wards]]
+name = "Test Ward"
+key = "REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY"
+sacrament_image = "sacrament/test_ward.svg"
+
+[[stream.wards]]
+name = "Jordan Willows 2nd Ward"
+key = "REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY"
+sacrament_image = "sacrament/jordan_willows_2nd_ward.svg"
+
+[[stream.wards]]
+name = "Lehi 25th Ward"
+key = "REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY"
+sacrament_image = "sacrament/lehi_25th_ward.png"
+
+[[stream.wards]]
+name = "Pioneer Crossing Ward"
+key = "REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY"
+sacrament_image = "sacrament/pioneer_crossing_ward.svg"
+
+[[stream.wards]]
+name = "Sommerset Ward"
+key = "REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY"
+sacrament_image = "sacrament/sommerset_ward.svg"
+
+[advanced]
+auto_restart = true
+restart_backoff_s = [
+    2,
+    5,
+    15,
+    60,
+]
+discovery_ttl_s = 5
+status_poll_ms = 2000
+
+[ptz]
+presets = [
+    { name = "Stand Far", slot = 0 },
+    { name = "Pulpit Far", slot = 1 },
+    { name = "Pulpit Medium", slot = 2 },
+    { name = "Pulpit Close", slot = 3 },
+    { name = "Conductor", slot = 4 },
+    { name = "Hymn Numbers", slot = 5 },
+]
+recall_speed = 0.10
+move_speed = 0.2
+default_preset = "Stand Far"

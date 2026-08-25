@@ -82,6 +82,21 @@ say "Verifying binary"
 say "Syncing Python environment"
 uv sync --extra dev
 
+# --- Local config ---
+# The live config.*.toml files hold YouTube stream keys and are git-ignored;
+# only the *.example.toml templates are tracked. On a fresh clone, seed a local
+# config.south.toml from the template and point config.toml at it so
+# `uv run ndi-rmtp` works out of the box (with placeholder keys to fill in).
+if [[ ! -e "$PROJECT_ROOT/config.toml" ]]; then
+  if [[ ! -f "$PROJECT_ROOT/config.south.toml" ]]; then
+    say "Seeding config.south.toml from config.south.example.toml (fill in real stream keys)"
+    cp "$PROJECT_ROOT/config.south.example.toml" "$PROJECT_ROOT/config.south.toml"
+    chmod 600 "$PROJECT_ROOT/config.south.toml"
+  fi
+  ln -sf config.south.toml "$PROJECT_ROOT/config.toml"
+  warn "config.toml -> config.south.toml created with PLACEHOLDER stream keys — edit it before going live."
+fi
+
 cat <<EOF
 
 ==> Dev setup complete. To run the app:

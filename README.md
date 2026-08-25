@@ -69,9 +69,12 @@ The dev-setup script:
    (`scripts/ndi-streamer-no-audio.patch`), builds it, symlinks the binary
    into `./bin/`
 4. Runs `uv sync --extra dev`
+5. Seeds a local `config.south.toml` from `config.south.example.toml` and
+   points `config.toml` at it (placeholder stream keys — edit before going
+   live). The live config is git-ignored; see the Security note below.
 
-Open <http://localhost:8080>. With auth disabled in `config.toml` (default
-for this repo's checked-in config) the page loads without a login.
+Open <http://localhost:8080>. With auth disabled in `config.toml` (the
+template default) the page loads without a login.
 
 ## Pi install
 
@@ -103,10 +106,17 @@ Notable sections:
   index 0–99), plus `recall_speed` and `move_speed`.
 - `[advanced]` — auto-restart, backoff schedule, polling rates.
 
-> **Security note.** The checked-in `config.toml` is a real distribution
-> artifact — it contains live YouTube stream keys. The GitHub repo is
-> private. If you ever flip it to public, rotate the keys and the admin
-> password first.
+> **Security note.** YouTube stream keys and the admin password are secrets
+> and are **not** committed. Only `config.south.example.toml` /
+> `config.north.example.toml` (placeholder keys) are tracked; the live
+> `config.toml` / `config.<south|north>.toml` are git-ignored. Copy a template
+> to `config.<south|north>.toml` and fill in your own keys:
+>
+> ```sh
+> cp config.south.example.toml config.south.toml   # then edit the key fields
+> ```
+>
+> On a fresh clone, `scripts/dev-setup-mac.sh` seeds this for you.
 
 ## Concepts
 

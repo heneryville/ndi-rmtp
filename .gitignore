@@ -13,6 +13,14 @@ uv.lock
 /bin/
 /build/
 
+# Live per-appliance configs — hold YouTube stream keys and the auth password.
+# NEVER commit these. Only the `*.example.toml` templates are tracked; copy one
+# to config.<south|north>.toml and fill in the real keys. `config.toml` is a
+# local symlink to the active appliance's config.
+/config.toml
+/config.south.toml
+/config.north.toml
+
 # Quarantine file written when a malformed config is found at boot.
 # Never commit — may contain partial/corrupted secrets.
 /config.broken.toml

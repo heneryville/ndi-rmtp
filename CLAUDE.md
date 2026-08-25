@@ -279,16 +279,25 @@ absorbs input-dim variation and the encoder/muxer stay stable.
 
 - `scripts/ndi-streamer-no-audio.patch` is a misleading filename. It now
   contains all our C modifications. `TODO.md` flags the rename.
-- Two configs ship in the repo: `config.south.toml` and
-  `config.north.toml`, one per appliance. `config.toml` is a symlink
-  to `config.south.toml` so local dev (`uv run ndi-rmtp` from the
-  project root) "just works" — south's wards/keys are the local
-  default. `scripts/install.sh` prompts north/south during deploy and
-  copies the chosen file to `/home/ndi-rmtp/.config/ndi-rmtp/config.toml`
-  (override interactively via `NDI_RMTP_DEPLOYMENT={south,north,keep}`).
-  The configs are in the repo and git history **on purpose** — the
-  distribution model is to clone with config baked in. The repo is
-  private. If visibility ever changes, rotate keys first.
+- Config storage is split into **tracked templates** and **untracked live
+  files**. Only `config.south.example.toml` / `config.north.example.toml`
+  (placeholder keys) are committed. The live `config.south.toml`,
+  `config.north.toml`, and the `config.toml` symlink hold real YouTube
+  stream keys and are **git-ignored** — they live only in your working
+  clone and on the appliances, never in git history. (This repo was scrubbed
+  of the previously-committed keys with `git filter-repo` before going
+  public; see the security note below.)
+  - Local dev: `config.toml` is a symlink to `config.south.toml` so
+    `uv run ndi-rmtp` "just works". `scripts/dev-setup-mac.sh` seeds
+    `config.south.toml` from the template on a fresh clone.
+  - Deploy: `scripts/install.sh` prompts north/south and copies your local
+    `config.$DEPLOYMENT.toml` to `/home/ndi-rmtp/.config/ndi-rmtp/config.toml`
+    (override via `NDI_RMTP_DEPLOYMENT={south,north,keep}`). If the live file
+    is absent it falls back to the `.example` template with placeholder keys.
+  - To add/rotate a key, edit your local `config.$DEPLOYMENT.toml` (never the
+    `.example`), bump `config_version`, note it in `CONFIG_CHANGELOG.md`, and
+    deploy. The changelog only records key *suffixes*, so it stays safe to
+    commit.
 - `~/Downloads/jordan_willows_sacrament_overlay.svg` is referenced
   historically in some docs as the source of truth for the sacrament
   template. The active SVGs in `sacrament/` are project-vendored.

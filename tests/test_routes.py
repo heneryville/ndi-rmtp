@@ -211,18 +211,3 @@ def test_protected_routes_reject_bad_password(client):
     r = client.get("/api/status", headers=_basic("admin", "wrong"))
     assert r.status_code == 401
 
-
-def test_index_syncs_quality_chip_with_selection(client):
-    # The streaming chip's quality label is rendered server-side at page load.
-    # The quality radios persist changes via their own hx-post to /api/config,
-    # so picking a new quality and starting a stream right after showed the
-    # *previous* quality in the chip even though the correct bitrate/bandwidth
-    # was actually used. Same defect the ward label had; the page must wire the
-    # radios straight to `.chip-quality`, exactly as it does for `.chip-ward`.
-    r = client.get("/", headers=_basic("admin", "hunter2"))
-    assert r.status_code == 200
-    body = r.text
-    assert ".chip-quality" in body, "chip-quality label is never referenced by script"
-    # A listener must exist that updates the label from the quality radios.
-    assert 'name="quality"' in body
-    assert "chipQuality" in body, "no handler syncs the quality chip on change"

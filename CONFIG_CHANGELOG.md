@@ -14,6 +14,8 @@ often need to trace.
 
 ## South (`config.south.toml`)
 
+- **v3** — 2026-08-29 — Restored `quality = "high"` (1080p30 @ 6 Mbps); the
+  appliance had been left on `medium` (3 Mbps). No stream-key changes.
 - **v2** — 2026-08-15 — Added the `config_version` stamp; fixed Test Ward stream
   key to `5wtm-…-4xea`.
 - **v1** — pre-2026-08-15 — Initial stamped generation (backfilled from git

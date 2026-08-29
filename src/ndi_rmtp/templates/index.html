@@ -412,6 +412,22 @@
       });
     }
 
+    // ---- Keep the streaming chip's quality label in sync ------------------
+    // Same defect the ward label had above: `.chip-quality` is only rendered
+    // server-side at page load, so picking a different quality and starting a
+    // stream right after showed the *previous* quality in the chip — even
+    // though the correct bitrate/bandwidth was spawned. Update it straight
+    // from the radios on change.
+    const qualityRadios = document.querySelectorAll('input[name="quality"]');
+    const chipQuality = document.querySelector(".chip-quality");
+    if (qualityRadios.length && chipQuality) {
+      qualityRadios.forEach((radio) => {
+        radio.addEventListener("change", () => {
+          if (radio.checked) chipQuality.textContent = radio.value;
+        });
+      });
+    }
+
     // ---- Auto-recall default preset on Start success ---------------------
     // As soon as the stream comes up, tell the camera to snap to the ward's
     // preferred starting preset. This lands during YouTube's "Preparing

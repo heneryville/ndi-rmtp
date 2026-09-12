@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>Camera Control</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<!--
+  Camera-only page, for sites that encode in OBS rather than through this
+  appliance. It never touches the streamer: no start/stop, no ward or quality,
+  no sacrament or mute. Just point the camera.
+
+  Deliberately no htmx — the only two dynamic bits (source list, PTZ controls)
+  are plain fetch in /static/ptz.js.
+-->
+<body class="camera-page">
+  <header>
+    <h1>Camera Control</h1>
+    {# Same deploy stamp the home page carries. An OBS-only ward never opens
+       `/`, so this is their only way to confirm the appliance picked up the
+       latest deploy. Static here — unlike index.html there's no status poll
+       on this page to keep it fresh, and it can't go stale anyway: the value
+       only changes on deploy, which restarts the app. #}
+    <div id="state-badge"
+         title="Config generation — increments on each deploy. Confirms this appliance loaded the latest config.">v{{ config.config_version }}</div>
+    <a class="page-link" href="/">Stream page →</a>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Camera source</h2>
+      <label>
+        <select id="camera-source-select">
+          <option value="{{ config.stream.last_source }}">{{ config.stream.last_source or "(searching for cameras…)" }}</option>
+        </select>
+        <small class="hint">
+          Which camera these controls point at. OBS picks its own source
+          separately — this only decides what the buttons below move.
+        </small>
+      </label>
+    </section>
+
+    {% with ptz_hide_when_unsupported = false %}
+      {% include "_ptz.html" %}
+    {% endwith %}
+  </main>
+
+  <footer class="site-footer">
+    Contact the Stake Technology Specialist for training or issues
+  </footer>
+
+  {# Dev-only fake backend, shared with index.html. Inert unless ?mock=1. #}
+  <script type="application/json" id="mock-seed">
+    {
+      "ward": {{ (config.stream.active_ward or "")|tojson }},
+      "quality": {{ (config.stream.quality or "high")|tojson }},
+      "default_preset": {{ (config.ptz.default_preset or "")|tojson }},
+      "presets": {{ config.ptz.presets|map(attribute='name')|list|tojson }},
+      "preset_slots": {{ config.ptz.presets|map(attribute='slot')|list|tojson }}
+    }
+  </script>
+  <script src="/static/mock.js"></script>
+
+  <script src="/static/ptz.js"></script>
+</body>
+</html>

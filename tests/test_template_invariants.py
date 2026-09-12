@@ -83,3 +83,57 @@ def test_streaming_chip_label_is_kept_in_sync_by_script(label):
         f"If this label genuinely cannot go stale, exclude it explicitly in "
         f"_config_bound_labels() with a comment saying why."
     )
+
+
+# ---- Shared camera card: one copy, not two ---------------------------------
+#
+# index.html and camera.html both show the same PTZ controls. They were inlined
+# in index.html originally; camera.html was built by extracting them into
+# _ptz.html + static/ptz.js rather than copying. These invariants exist because
+# a copy would be the easy edit for the next person, and the two copies would
+# then drift silently — the controls still render, they just stop matching.
+
+CAMERA_TEMPLATE = Path(__file__).parent.parent / "src" / "ndi_rmtp" / "templates" / "camera.html"
+PTZ_PARTIAL = Path(__file__).parent.parent / "src" / "ndi_rmtp" / "templates" / "_ptz.html"
+PTZ_SCRIPT = Path(__file__).parent.parent / "src" / "ndi_rmtp" / "static" / "ptz.js"
+
+
+def test_ptz_partial_and_script_exist():
+    assert PTZ_PARTIAL.exists(), "the shared camera card partial is missing"
+    assert PTZ_SCRIPT.exists(), "the shared camera-control script is missing"
+
+
+@pytest.mark.parametrize("template", [TEMPLATE, CAMERA_TEMPLATE], ids=["index", "camera"])
+def test_page_includes_shared_ptz_partial(template):
+    assert '"_ptz.html"' in template.read_text(), (
+        f"{template.name} must render the camera card via {{% include \"_ptz.html\" %}} "
+        f"rather than its own copy of the markup."
+    )
+
+
+@pytest.mark.parametrize("template", [TEMPLATE, CAMERA_TEMPLATE], ids=["index", "camera"])
+def test_page_loads_shared_ptz_script(template):
+    assert "/static/ptz.js" in template.read_text(), (
+        f"{template.name} includes the camera card but never loads ptz.js, so "
+        f"the preview, presets, and d-pad are inert."
+    )
+
+
+@pytest.mark.parametrize("template", [TEMPLATE, CAMERA_TEMPLATE], ids=["index", "camera"])
+def test_page_does_not_inline_ptz_markup(template):
+    assert 'id="ptz-card"' not in template.read_text(), (
+        f"{template.name} inlines the camera card markup. It belongs in "
+        f"_ptz.html so both pages stay identical."
+    )
+
+
+@pytest.mark.parametrize(
+    "symbol", ["renderPtzInfo", "refreshPreview", "bindHoldButton"]
+)
+def test_index_does_not_inline_ptz_script(symbol):
+    """These live in static/ptz.js now. A second top-level copy in index.html
+    wouldn't just duplicate logic — ptz.js and the inline block would both bind
+    the delegated preset click handler, firing every recall twice."""
+    assert symbol not in _script_source(_template_source()), (
+        f"index.html inlines `{symbol}`, which static/ptz.js also defines."
+    )

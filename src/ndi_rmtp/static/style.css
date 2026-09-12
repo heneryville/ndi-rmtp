@@ -50,13 +50,40 @@ body {
   padding-bottom: var(--action-bar-h);
 }
 
+/* /camera has no sticky action bar (it never starts or stops anything), so it
+   must not reserve the strip of dead space the main page needs. */
+body.camera-page { padding-bottom: 1.5rem; }
+
 header {
   position: sticky; top: 0; z-index: 20;
   display: flex; justify-content: space-between; align-items: center;
+  /* A real gap, not margins: an auto margin collapses to zero once the row runs
+     out of free space, which let the version stamp sit flush against the title
+     ("YouTubev3") on narrow viewports. */
+  gap: 0.6rem;
   padding: 0.75rem 1rem; background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-header h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+/* Truncate the title rather than let it wrap to three lines and shove the
+   version stamp and nav pill off the right edge. min-width:0 is required —
+   flex items default to min-width:auto and refuse to shrink below their
+   content, which is what forced the wrap in the first place. */
+header h1 {
+  margin: 0; font-size: 1.05rem; font-weight: 600;
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Cross-link between the stream page (/) and the camera-only page (/camera).
+   The badge takes the auto margin so the h1 stays hard left and the badge +
+   link sit together on the right; flex:0 0 auto stops either from being
+   squeezed or overflowing when the title is long. */
+header #state-badge { margin-left: auto; flex: 0 0 auto; }
+header .page-link { flex: 0 0 auto; }
+.page-link {
+  font-size: 0.72rem; color: var(--muted); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.25rem 0.6rem; white-space: nowrap;
+}
+.page-link:hover { background: var(--slate); color: var(--text); }
 /* Repurposed as the deploy-version stamp (upper-right): small, middling gray. */
 #state-badge { font-size: 0.72rem; color: #808690; }
 
@@ -221,6 +248,10 @@ fieldset legend { padding: 0 0.4rem; color: var(--muted); font-size: 0.85rem; }
 .ptz-preview-placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
+  /* justify-content centres the anonymous text block, which is full-width —
+     so a message long enough to wrap still needs text-align to look centred.
+     ptz.js swaps in a multi-line "not connected" message here. */
+  text-align: center; padding: 0 1.25rem;
   color: var(--muted);
   font-size: 0.9rem;
   pointer-events: none;

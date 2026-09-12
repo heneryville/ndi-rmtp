@@ -211,3 +211,122 @@ def test_protected_routes_reject_bad_password(client):
     r = client.get("/api/status", headers=_basic("admin", "wrong"))
     assert r.status_code == 401
 
+
+
+# ---- /camera : PTZ-only page for operators who encode in OBS ----------------
+
+
+def test_camera_page_requires_auth(client):
+    r = client.get("/camera")
+    assert r.status_code == 401
+
+
+def test_camera_page_renders_when_authed(client):
+    r = client.get("/camera", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+
+
+def test_camera_page_lists_configured_presets(tmp_path, streamer, discovery):
+    """Preset names render server-side so the page is useful on first paint,
+    before /api/ptz/info comes back (or at all, when PTZ is unavailable)."""
+    from ndi_rmtp.config import PtzConfig, PtzPreset
+
+    config = Config(
+        auth=AuthConfig(username="admin", password="hunter2"),
+        stream=StreamConfig(wards=[Ward(name="Primary", key="abc-key")]),
+        ptz=PtzConfig(presets=[PtzPreset(name="Pulpit", slot=1)]),
+        advanced=AdvancedConfig(),
+    )
+    config_path = tmp_path / "config.toml"
+    config.save(config_path)
+    client = TestClient(
+        build_app(config_path=config_path, streamer=streamer, discovery=discovery)
+    )
+    r = client.get("/camera", headers=_basic("admin", "hunter2"))
+    assert "Pulpit" in r.text
+
+
+def test_camera_page_omits_stream_controls(client):
+    """The whole point of this page: OBS owns the encode, so nothing here may
+    start, stop, or reconfigure the appliance's own stream."""
+    r = client.get("/camera", headers=_basic("admin", "hunter2"))
+    # Guard the guard: a 404 body trivially contains none of these.
+    assert r.status_code == 200
+    for path in ("/api/start", "/api/stop", "/api/sacrament", "/api/mute"):
+        assert path not in r.text, f"{path} must not be reachable from /camera"
+
+
+def test_api_config_persists_last_source(client, tmp_path):
+    """The camera page's source picker writes here. PtzController connects to
+    config.stream.last_source, which previously only /api/start ever set — so
+    a site that never streams through the appliance had no way to choose one."""
+    r = client.post(
+        "/api/config",
+        headers=_basic("admin", "hunter2"),
+        data={"last_source": "CAM (Channel 1)"},
+    )
+    assert r.status_code == 200
+    assert Config.load(tmp_path / "config.toml").stream.last_source == "CAM (Channel 1)"
+
+
+def test_camera_page_keeps_card_visible_when_ptz_unsupported(client):
+    """/camera must not hide the camera card the way / does.
+
+    The main page can hide it — there's a stream to run either way. On /camera
+    hiding it leaves a blank page with no explanation, so the card stays up and
+    ptz.js writes the reason into the preview placeholder instead.
+    """
+    r = client.get("/camera", headers=_basic("admin", "hunter2"))
+    card = r.text[r.text.index('id="ptz-card"'):][:200]
+    assert 'data-hide-when-unsupported="false"' in card
+    assert "hidden" not in card.split(">")[0]
+
+
+def test_index_hides_card_until_ptz_reports_supported(client):
+    """The counterpart: / keeps the opt-in hiding behaviour it always had."""
+    r = client.get("/", headers=_basic("admin", "hunter2"))
+    card = r.text[r.text.index('id="ptz-card"'):][:200]
+    assert 'data-hide-when-unsupported="true"' in card
+    assert "hidden" in card.split(">")[0]
+
+
+def test_camera_page_shows_config_version(tmp_path, streamer, discovery):
+    """Same contract the home page has (test_index_shows_config_version).
+
+    config_version exists so an operator can confirm at a glance that the
+    appliance loaded the latest deploy. An OBS-only ward never opens `/`, so
+    without the stamp here they have no way to check.
+    """
+    config = Config(
+        auth=AuthConfig(username="admin", password="hunter2"),
+        stream=StreamConfig(wards=[Ward(name="Primary", key="abc-key")]),
+        advanced=AdvancedConfig(),
+        config_version=42,
+    )
+    config_path = tmp_path / "config.toml"
+    config.save(config_path)
+    client = TestClient(
+        build_app(config_path=config_path, streamer=streamer, discovery=discovery)
+    )
+    r = client.get("/camera", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    assert "v42" in r.text
+
+
+def test_static_assets_are_revalidated_not_blindly_cached(client):
+    """A code-only deploy changes style.css but not config_version.
+
+    With no Cache-Control the browser may reuse a cached stylesheet without
+    revalidating, so a deployed CSS fix appears not to have landed until the
+    operator hard-refreshes. `no-cache` forces a conditional request; the ETag
+    keeps it cheap.
+    """
+    r = client.get("/static/style.css")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+    assert r.headers.get("etag")
+
+    # A conditional re-request must come back 304, i.e. revalidation is cheap.
+    again = client.get("/static/style.css", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304

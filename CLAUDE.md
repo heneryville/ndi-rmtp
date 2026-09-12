@@ -111,6 +111,35 @@ If you find yourself wanting to "just restart the subprocess" to apply a
 config change, think hard — the seamless-transition property is the whole
 point of the current design.
 
+### Two pages share one camera card
+
+`/` is the stream operator's page. `/camera` is a PTZ-only page for wards that
+encode in OBS and use this appliance purely as a camera remote — it never
+touches the streamer.
+
+Both render the same camera controls from `templates/_ptz.html`, with behaviour
+in `static/ptz.js`. That markup and JS used to be inline in `index.html`;
+`camera.html` was built by extracting them, **not** by copying. Keep it that
+way — `tests/test_template_invariants.py` fails if either page grows its own
+copy. Two top-level copies of `ptz.js` would also double-bind the delegated
+preset handler, firing every recall twice.
+
+The partial takes two parameters at the include site (see its header comment).
+When passing a boolean, use Jinja's plain `default(x)` — `default(x, true)`
+substitutes for any *falsy* value and will silently swallow a `false`.
+
+`static/mock.js` (`?mock=1`) is shared by both pages and is the only way to
+work on either UI without a camera. Load it *before* `ptz.js`, which starts
+polling as soon as it runs. Page-specific values reach it through the
+`<script type="application/json" id="mock-seed">` block each template renders.
+
+**`PtzController` connects to `config.stream.last_source`.** That used to be a
+side effect of `POST /api/start`, which an OBS-only site never calls — so
+`/api/config` accepts `last_source` and the camera page's source picker writes
+it. It's deliberately not validated against the discovery cache; cameras drop
+off the network for a beat and rejecting the write would lose the operator's
+choice.
+
 ### Config is the source of truth for the UI
 
 `src/ndi_rmtp/app.py` reloads `config.toml` on **every** request via

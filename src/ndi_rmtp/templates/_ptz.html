@@ -1,0 +1,69 @@
+{#
+  Shared camera-control card: preview + presets + manual pan/tilt/zoom.
+
+  Included by index.html (alongside the stream controls) and camera.html (the
+  PTZ-only page for operators who encode in OBS). Behaviour lives in
+  /static/ptz.js, which both pages load — keep it there rather than inlining,
+  so the two pages can't drift apart.
+
+  Parameters (set with {% with %} at the include site):
+    ptz_card_class            extra classes for the <section>. index.html passes
+                              "streaming-only" so the card follows stream state.
+    ptz_hide_when_unsupported when true the whole card disappears if the camera
+                              reports no PTZ support. index.html wants that (the
+                              page has plenty else to show); camera.html does not
+                              — an empty page tells the operator nothing, so it
+                              keeps the controls up and explains itself in the
+                              preview placeholder instead.
+#}
+<section class="card {{ ptz_card_class | default('', true) }}"
+         id="ptz-card"
+         {#- default(true) without the second argument on purpose: Jinja's
+             default(x, boolean=true) substitutes for any FALSY value, which
+             swallowed camera.html's explicit `false` and hid the card on the
+             one page that must always show it. Plain default() only fills in
+             when the variable is genuinely undefined. -#}
+         data-hide-when-unsupported="{{ 'true' if ptz_hide_when_unsupported | default(true) else 'false' }}"
+         {% if ptz_hide_when_unsupported | default(true) %}hidden{% endif %}>
+  <h2>Camera <small id="ptz-source"></small></h2>
+
+  {# The placeholder doubles as the "no camera" notice — ptz.js rewrites its
+     text when the camera reports no PTZ support. Deliberately not a separate
+     element beside it: #ptz-card becomes a named-area grid at >=820px, and an
+     extra child would auto-place into a row of its own. #}
+  <div class="ptz-preview-wrap">
+    <img id="ptz-preview" class="ptz-preview" alt="" hidden>
+    <div class="ptz-preview-placeholder" id="ptz-placeholder">Waiting for camera…</div>
+    <div class="sacrament-overlay" aria-hidden="true">SACRAMENT MODE</div>
+  </div>
+
+  {# Rendered server-side so the presets are usable on first paint, before
+     (or without) a successful /api/ptz/info round-trip. ptz.js re-renders
+     this grid from the live response once it arrives. #}
+  <div id="presets-grid" class="presets-grid">
+    {% for p in config.ptz.presets %}
+    <button type="button" class="preset-btn"
+            data-slot="{{ p.slot }}"
+            data-speed="{{ config.ptz.recall_speed }}">{{ p.name }}</button>
+    {% endfor %}
+  </div>
+
+  <details class="ptz-manual">
+    <summary>Manual control</summary>
+    <div class="ptz-manual-body">
+      <div class="ptz-pad">
+        <button type="button" class="ptz-arrow" data-pan="0" data-tilt="0.5" aria-label="Tilt up">↑</button>
+        <div class="ptz-row">
+          <button type="button" class="ptz-arrow" data-pan="0.5" data-tilt="0" aria-label="Pan left">←</button>
+          <button type="button" class="ptz-stop" id="ptz-stop" aria-label="Stop">◉</button>
+          <button type="button" class="ptz-arrow" data-pan="-0.5" data-tilt="0" aria-label="Pan right">→</button>
+        </div>
+        <button type="button" class="ptz-arrow" data-pan="0" data-tilt="-0.5" aria-label="Tilt down">↓</button>
+      </div>
+      <div class="ptz-zoom">
+        <button type="button" class="ptz-zoom-btn" data-zoom="0.5">＋ Zoom In</button>
+        <button type="button" class="ptz-zoom-btn" data-zoom="-0.5">－ Zoom Out</button>
+      </div>
+    </div>
+  </details>
+</section>

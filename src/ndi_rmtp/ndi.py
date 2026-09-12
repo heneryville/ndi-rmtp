@@ -33,11 +33,24 @@ logger = logging.getLogger(__name__)
 _DISCOVERY_ARGS: tuple[str, ...] = ()
 
 # Capture window: how long to read stdout before killing the subprocess.
-# NDI source advertisements arrive within ~1-2 seconds on a LAN.
-_DISCOVERY_CAPTURE_S = 2.0
+#
+# The first advertisement arrives within ~1-2s, but ndi-streamer deliberately
+# keeps polling after that until the source count stops changing (its
+# NDI_FIND_SETTLE_* window, worst case ~3.2s) before it prints the list. Cutting
+# the subprocess off at 2s truncated the listing to whichever sender answered
+# first, which is how a slow PTZ camera lost its dropdown entry to a laptop.
+# Must stay comfortably above ndi-streamer's settle window.
+_DISCOVERY_CAPTURE_S = 6.0
 
 # Hard timeout: kill the subprocess if it doesn't exit after we've captured.
 _DISCOVERY_KILL_GRACE_S = 1.0
+
+# ndi-streamer prints the whole source list in one burst and then blocks on its
+# interactive prompt, so stdout never reaches EOF and waiting out the full
+# capture window would stall the dropdown for _DISCOVERY_CAPTURE_S every time.
+# Once the first source line has arrived, a gap this long means the burst is
+# over and we can stop reading.
+_DISCOVERY_QUIET_S = 0.4
 
 # Match a numbered source line.
 # Example: "    1. MITCHELL-VIDERA (Scan Converter) (127.0.0.1:5962)"
@@ -98,19 +111,27 @@ class NDIDiscovery:
 
         lines_text: list[str] = []
         deadline = time.monotonic() + _DISCOVERY_CAPTURE_S
+        seen_source = False
         try:
             while time.monotonic() < deadline:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
+                # Before the first source line, allow the full remaining budget
+                # (ndi-streamer is still settling its list). After it, a short
+                # gap means the burst is finished -- see _DISCOVERY_QUIET_S.
+                wait_s = min(remaining, _DISCOVERY_QUIET_S) if seen_source else remaining
                 try:
                     assert proc.stdout is not None
-                    line = await asyncio.wait_for(proc.stdout.readline(), remaining)
+                    line = await asyncio.wait_for(proc.stdout.readline(), wait_s)
                 except asyncio.TimeoutError:
                     break
                 if not line:
                     break  # EOF
-                lines_text.append(line.decode("utf-8", errors="replace"))
+                text = line.decode("utf-8", errors="replace")
+                lines_text.append(text)
+                if _SOURCE_RE.match(text.rstrip("\n")):
+                    seen_source = True
         finally:
             if proc.returncode is None:
                 try:

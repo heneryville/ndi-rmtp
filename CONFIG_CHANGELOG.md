@@ -14,6 +14,8 @@ often need to trace.
 
 ## South (`config.south.toml`)
 
+- **v4** — 2026-09-07 — No config changes. Bumped to stamp the deploy that adds
+  the `/camera` PTZ-only page (for wards encoding in OBS). No stream-key changes.
 - **v3** — 2026-08-29 — Restored `quality = "high"` (1080p30 @ 6 Mbps); the
   appliance had been left on `medium` (3 Mbps). No stream-key changes.
 - **v2** — 2026-08-15 — Added the `config_version` stamp; fixed Test Ward stream
@@ -23,6 +25,8 @@ often need to trace.
 
 ## North (`config.north.toml`)
 
+- **v4** — 2026-09-07 — No config changes. Bumped to stamp the deploy that adds
+  the `/camera` PTZ-only page (for wards encoding in OBS). No stream-key changes.
 - **v3** — 2026-08-23 — Rotated Lehi 25th Ward stream key (`…-8zet` → `…-25rj`).
 - **v2** — 2026-08-15 — Wired real ward stream keys + sacrament overlays; bumped
   for first North deploy.

@@ -307,10 +307,10 @@ index 5d5a99c..084eca3 100644
  #endif
 \ No newline at end of file
 diff --git a/src/ndi_streamer.c b/src/ndi_streamer.c
-index 399a4eb..6964045 100644
+index 399a4eb..30a498b 100644
 --- a/src/ndi_streamer.c
 +++ b/src/ndi_streamer.c
-@@ -5,12 +5,22 @@
+@@ -5,15 +5,37 @@
  // https://opensource.org/licenses/MIT.
  
  #include <stdio.h>
@@ -333,7 +333,22 @@ index 399a4eb..6964045 100644
  
  #define NDI_RECV_TIMEOUT 2000
  
-@@ -22,8 +32,121 @@ typedef struct AppOptions {
++/* Source discovery settle window.
++ *
++ * NDIlib_find_wait_for_sources() returns as soon as the source list CHANGES,
++ * not after its full timeout. Exiting the discovery loop on the first non-zero
++ * count therefore lists only whichever sender answered first and silently drops
++ * every slower one -- an embedded PTZ camera loses that race to a laptop on
++ * roughly 19 of 20 attempts. After the first source arrives we keep polling
++ * until the count holds steady, so the list is complete before we print it. */
++#define NDI_FIND_SETTLE_POLL_MS 400
++#define NDI_FIND_SETTLE_STABLE 2
++#define NDI_FIND_SETTLE_MAX_POLLS 8
++
+ typedef struct AppOptions {
+     char ndi_input_addr[255];
+     char output[255];
+@@ -22,8 +44,121 @@ typedef struct AppOptions {
      char audio_encoder[40];
      int video_bitrate;
      int audio_bitrate;
@@ -455,7 +470,7 @@ index 399a4eb..6964045 100644
  AppOptions
  read_params(int argc, char **argv);
  
-@@ -39,7 +162,7 @@ main(int argc, char **argv)
+@@ -39,7 +174,7 @@ main(int argc, char **argv)
          printf("[ERROR] codec '%s' not found\n", opts.video_encoder);
          return 1;
      }
@@ -464,7 +479,7 @@ index 399a4eb..6964045 100644
          printf("[ERROR] codec '%s' not found\n", opts.audio_encoder);
          return 1;
      }
-@@ -58,10 +181,14 @@ main(int argc, char **argv)
+@@ -58,10 +193,14 @@ main(int argc, char **argv)
          source.p_url_address = opts.ndi_input_addr;
      }
  
@@ -480,7 +495,7 @@ index 399a4eb..6964045 100644
      };
  
      NDIlib_recv_instance_t recv = NDIlib_recv_create_v3(&recv_create_desc);
-@@ -71,6 +198,12 @@ main(int argc, char **argv)
+@@ -71,6 +210,12 @@ main(int argc, char **argv)
          return 1;
      }
  
@@ -493,7 +508,7 @@ index 399a4eb..6964045 100644
      char ffmpeg_output_format[30];
      if (strcmp(opts.output_format, "rtmp") == 0) {
          snprintf(ffmpeg_output_format, sizeof ffmpeg_output_format, "flv");
-@@ -106,8 +239,21 @@ main(int argc, char **argv)
+@@ -106,8 +251,21 @@ main(int argc, char **argv)
              continue;
          }
  
@@ -516,7 +531,7 @@ index 399a4eb..6964045 100644
  
          int width = 0, height = 0;
          AVRational frame_rate = {};
-@@ -127,10 +273,17 @@ main(int argc, char **argv)
+@@ -127,10 +285,17 @@ main(int argc, char **argv)
  
          ffmpeg_output_close_codecs(fa_ctx);
  
@@ -537,7 +552,7 @@ index 399a4eb..6964045 100644
  
          if (ffmpeg_output_write_header(fa_ctx, &output_options) < 0) {
              printf("[ERROR] %s", fa_ctx->error_str);
-@@ -139,17 +292,113 @@ main(int argc, char **argv)
+@@ -139,17 +304,113 @@ main(int argc, char **argv)
  
          fc_reset(fc_ctx);
  
@@ -655,7 +670,7 @@ index 399a4eb..6964045 100644
  
                  NDIlib_recv_free_video_v2(recv, &v_frame);
  
-@@ -158,18 +407,41 @@ main(int argc, char **argv)
+@@ -158,18 +419,41 @@ main(int argc, char **argv)
                      break;
                  }
              }
@@ -699,7 +714,7 @@ index 399a4eb..6964045 100644
  
                  while ((frame = fc_ndi_audio_frame_to_avframe(
                                  fc_ctx, fa_ctx->audio_codec_ctx, NULL))
-@@ -189,6 +461,8 @@ main(int argc, char **argv)
+@@ -189,6 +473,8 @@ main(int argc, char **argv)
  
      free_frame_converter_ctx(&fc_ctx);
  
@@ -708,7 +723,38 @@ index 399a4eb..6964045 100644
      NDIlib_recv_destroy(recv);
  
      NDIlib_destroy();
-@@ -279,6 +553,11 @@ const ProgramOption options[] = {
+@@ -210,6 +496,7 @@ find_ndi_source(NDIlib_source_t *source)
+         uint32_t no_sources = 0;
+         printf("Looking for sources");
+ 
++        /* Block until at least one source shows up (original behaviour). */
+         for (size_t i = 1; !no_sources; ++i) {
+             printf(i % 4 == 0 ? "\033[3D   \033[3D" : ".");
+             fflush(stdout);
+@@ -217,6 +504,22 @@ find_ndi_source(NDIlib_source_t *source)
+             p_sources = NDIlib_find_get_current_sources(p_find, &no_sources);
+         }
+ 
++        /* The list is non-empty but almost certainly incomplete -- see the
++         * NDI_FIND_SETTLE_* comment above. Keep polling until the count stops
++         * changing, so slower senders make it into the listing too. */
++        uint32_t prev_sources = no_sources;
++        int stable_polls = 0;
++        for (int poll = 0;
++             poll < NDI_FIND_SETTLE_MAX_POLLS && stable_polls < NDI_FIND_SETTLE_STABLE;
++             ++poll) {
++            printf(".");
++            fflush(stdout);
++            NDIlib_find_wait_for_sources(p_find, NDI_FIND_SETTLE_POLL_MS);
++            p_sources = NDIlib_find_get_current_sources(p_find, &no_sources);
++            stable_polls = (no_sources == prev_sources) ? stable_polls + 1 : 0;
++            prev_sources = no_sources;
++        }
++
+         if (!p_sources) {
+             printf("\n\nNo sources available\n");
+             break;
+@@ -279,6 +582,11 @@ const ProgramOption options[] = {
      { "h,help", "show help", 1 },
      { "video_bitrate", "video bitrate (optional, by default '30000000')", 0 },
      { "audio_bitrate", "audio bitrate (optional, by default '320000')", 0 },
@@ -720,7 +766,7 @@ index 399a4eb..6964045 100644
      { NULL, NULL, 0 },
  };
  
-@@ -298,6 +577,7 @@ read_params(int argc, char **argv)
+@@ -298,6 +606,7 @@ read_params(int argc, char **argv)
      sprintf(res.output, "rtsp://127.0.0.1:8554/live.sdp");
      res.video_bitrate = 30000000;
      res.audio_bitrate = 320000;
@@ -728,7 +774,7 @@ index 399a4eb..6964045 100644
  
      for (; (c = op_parse(argc, argv, op_ctx, &opt)) != -1;) {
          switch (c) {
-@@ -352,6 +632,33 @@ read_params(int argc, char **argv)
+@@ -352,6 +661,33 @@ read_params(int argc, char **argv)
                      res.audio_bitrate = (int)si;
                  }
              }

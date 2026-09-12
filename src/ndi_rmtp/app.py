@@ -62,7 +62,19 @@ def build_app(
 
     require_auth = make_auth_dependency(get_config)
 
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    # `no-cache` means "revalidate before reusing", NOT "don't cache" — the
+    # browser still stores the file and StaticFiles' ETag turns each check into
+    # a tiny 304. Without it, a code-only deploy (which leaves config_version
+    # untouched, so there's no cache-buster to change) leaves operators staring
+    # at a stale style.css until they hard-refresh. Revalidation is free on a
+    # LAN appliance; a stale UI costs a service call.
+    class _RevalidatingStatic(StaticFiles):
+        def file_response(self, *args, **kwargs):  # type: ignore[override]
+            resp = super().file_response(*args, **kwargs)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
+    app.mount("/static", _RevalidatingStatic(directory=str(_STATIC_DIR)), name="static")
 
     @app.get("/healthz")
     def healthz():
@@ -78,6 +90,17 @@ def build_app(
                 "config": cfg,
                 "qualities": ["low", "medium", "high"],
             },
+        )
+
+    @app.get("/camera", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+    def camera(request: Request):
+        """PTZ-only page for sites that encode in OBS rather than through this
+        appliance. Shares the camera card with `/` (templates/_ptz.html) but
+        exposes nothing that touches the streamer."""
+        return templates.TemplateResponse(
+            request,
+            "camera.html",
+            {"config": get_config()},
         )
 
     @app.get("/api/status", dependencies=[Depends(require_auth)])
@@ -236,8 +259,17 @@ def build_app(
         active_ward: Optional[str] = Form(None),
         quality: Optional[str] = Form(None),
         default_preset: Optional[str] = Form(None),
+        last_source: Optional[str] = Form(None),
     ):
         cfg = get_config()
+        if last_source is not None:
+            # Deliberately unvalidated against the discovery cache. This is the
+            # source PtzController connects to, and the /camera page writes it
+            # whenever the operator picks a camera. Rejecting names that are
+            # momentarily absent from discovery (cameras drop off the network
+            # for a beat all the time) would lose the operator's choice.
+            # /api/start takes the same permissive approach.
+            cfg.stream.last_source = last_source
         if active_ward is not None:
             if cfg.stream.find_ward(active_ward) is None:
                 raise HTTPException(

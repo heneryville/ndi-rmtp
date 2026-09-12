@@ -11,10 +11,20 @@ from ndi_rmtp.ndi import NDIDiscovery, Source
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _make_discovery(lines: list[str], ttl_s: float = 0.2) -> NDIDiscovery:
+def _make_discovery(
+    lines: list[str],
+    ttl_s: float = 0.2,
+    delays: list[float] | None = None,
+    hang: bool = False,
+) -> NDIDiscovery:
     d = NDIDiscovery(binary_path=Path("unused"), ttl_s=ttl_s)
     d._spawn_argv = [sys.executable, str(FIXTURES / "fake_ndi_lister.py")]
-    d._spawn_env = {"FAKE_NDI_LISTER": json.dumps(lines)}
+    env = {"FAKE_NDI_LISTER": json.dumps(lines)}
+    if delays:
+        env["FAKE_NDI_LISTER_DELAYS"] = json.dumps(delays)
+    if hang:
+        env["FAKE_NDI_LISTER_HANG"] = "1"
+    d._spawn_env = env
     return d
 
 
@@ -85,3 +95,50 @@ async def test_discovery_handles_address_with_dotted_ip_and_port():
     assert len(sources) == 1
     assert sources[0].name == "SRC (Name)"
     assert sources[0].address == "192.168.1.100:5961"
+
+
+async def test_discovery_keeps_slow_source_that_arrives_after_the_first():
+    """Regression: a slow sender must not be dropped from the listing.
+
+    ndi-streamer used to exit its find loop on the first non-zero source count,
+    so whichever sender answered first won and the rest were silently dropped.
+    In the field a PTZ camera lost that race to a laptop on 19 of 20 attempts.
+    The C side now settles the list before printing, which delays the whole
+    burst -- the reader must wait long enough to still catch it.
+    """
+    d = _make_discovery(
+        [
+            "Looking for sources.",
+            "Available NDI sources:",
+            "    1. DARYLWARNERX (Studio Monitor 1) (192.168.111.254:5961)",
+            "    2. UHD CAMERA (NDI HX3, 192.168.111.248) (192.168.111.248:5961)",
+        ],
+        # The settle window lands before the burst, well past the old 2s cutoff.
+        delays=[0, 2.5, 0, 0],
+    )
+    names = [s.name for s in await d.list()]
+    assert "DARYLWARNERX (Studio Monitor 1)" in names
+    assert "UHD CAMERA (NDI HX3, 192.168.111.248)" in names, (
+        "the slower camera was dropped from the listing"
+    )
+
+
+async def test_discovery_returns_promptly_when_binary_hangs_at_prompt():
+    """The real binary never reaches EOF -- it blocks on 'select source'.
+
+    Without a quiet-period cutoff the reader would burn the entire capture
+    window on every single refresh, stalling the dropdown.
+    """
+    d = _make_discovery(
+        [
+            "Available NDI sources:",
+            "    1. ONE (X) (1.2.3.4:5961)",
+        ],
+        hang=True,
+    )
+    start = asyncio.get_running_loop().time()
+    sources = await d.list()
+    elapsed = asyncio.get_running_loop().time() - start
+
+    assert [s.name for s in sources] == ["ONE (X)"]
+    assert elapsed < 3.0, f"returned in {elapsed:.1f}s; should stop once the burst ends"

@@ -441,6 +441,74 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   cursor: not-allowed;
 }
 
+/* -------------------------------------------------------------------------
+ * YouTube liveness
+ *
+ * The one rule here: we only ever render POSITIVE claims. Seeing a broadcast
+ * proves one exists; not seeing one proves nothing, because an unlisted
+ * broadcast is indistinguishable from a stream that never went live. So there
+ * is deliberately no error/warning styling in this block — nothing amber, no
+ * banner. See youtube.py for the three detection schemes this replaced.
+ * ----------------------------------------------------------------------- */
+.yt-line { display: flex; align-items: flex-start; gap: 0.6rem; }
+.yt-body { flex: 1; min-width: 0; }
+.yt-headline { font-size: 0.95rem; font-weight: 600; }
+.yt-sub { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin-top: 0.25rem; }
+.yt-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--slate-3); flex-shrink: 0; margin-top: 6px;
+}
+/* Green only once we have actually seen it. */
+#yt-setup-card[data-yt="live"] .yt-dot,
+#yt-setup-card[data-yt="scheduled"] .yt-dot { background: #4ade80; }
+.yt-view { font-size: 0.78rem; flex-shrink: 0; margin-top: 2px; }
+.yt-actions {
+  margin-top: 0.85rem; padding-top: 0.75rem; border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+}
+.yt-why { flex: 1; min-width: 220px; margin-top: 0; }
+/* Once a broadcast is visible there is nothing to suggest — hide the nudge
+   rather than inviting a pointless second trip to YouTube. */
+#yt-setup-card[data-yt="live"] .yt-actions,
+#yt-setup-card[data-yt="scheduled"] .yt-actions { display: none; }
+
+.btn-secondary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  min-height: 44px; padding: 0 0.9rem;
+  background: var(--slate); color: var(--text); text-decoration: none;
+  border: 1px solid var(--slate-2); border-radius: 8px;
+  font: inherit; font-weight: 600; font-size: 0.9rem;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--slate-2); }
+.btn-secondary:active { transform: scale(0.98); }
+.yt-num {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--slate-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 700;
+}
+
+.chip-right { display: flex; align-items: center; gap: 0.85rem; flex-shrink: 0; }
+.chip-live {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.78rem; text-decoration: none; white-space: nowrap;
+  color: #4ade80; border: 1px solid #1e3a2a; background: #0a2517;
+  border-radius: 999px; padding: 0.25rem 0.6rem;
+}
+
+.yt-ok-note {
+  color: #86efac; background: #0a2517; border: 1px solid #1e3a2a;
+  border-radius: 6px; padding: 0.65rem 0.75rem;
+  font-size: 0.85rem; line-height: 1.5; margin: 0.6rem 0;
+}
+.yt-steps {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.75rem;
+}
+.yt-steps-lead { margin: 0 0 0.7rem; font-size: 0.85rem; color: #c9ccd1; line-height: 1.5; }
+.yt-steps-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.yt-help-intro { margin: 0; }
+
 .hint {
   display: block; color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem;
 }

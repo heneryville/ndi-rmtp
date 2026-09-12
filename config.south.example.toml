@@ -28,6 +28,14 @@ quality = "high"
 # Each ward's `key` is its YouTube stream key (YouTube Studio -> Go Live ->
 # Stream key). sacrament_image points at an SVG/PNG in the sacrament/ dir;
 # leave empty to disable sacrament mode for that ward.
+# Optional. Public YouTube channel ID for this ward ("UC..." — copy it out of
+# the Studio address bar: studio.youtube.com/channel/<THIS>/). NOT a secret, so
+# it is safe to commit here. Enables two things and nothing else: a one-tap link
+# to this ward's Live Control Room, and a "Live on YouTube" confirmation when
+# the broadcast happens to be public. It can never produce a warning, so a wrong
+# or missing value costs nothing — the ward streams exactly as before.
+# channel_id = "UCxxxxxxxxxxxxxxxxxxxxxx"
+
 [[stream.wards]]
 name = "Test Ward"
 key = "REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY"

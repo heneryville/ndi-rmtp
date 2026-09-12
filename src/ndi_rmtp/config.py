@@ -32,6 +32,12 @@ class Ward:
     name: str
     key: str
     sacrament_image: str = ""  # SVG/PNG/JPG path; empty disables sacrament mode for this ward
+    # Public YouTube channel ID (`UC…`, 24 chars) — NOT a secret, unlike `key`,
+    # so it belongs in the committed example templates. Optional: without it
+    # the ward streams exactly as before, it just loses the one-tap link to its
+    # Live Control Room and the "Live on YouTube" confirmation. It can never
+    # cause a warning (see youtube.py), so a wrong value costs nothing.
+    channel_id: str = ""
 
 
 @dataclass

@@ -330,3 +330,81 @@ def test_static_assets_are_revalidated_not_blindly_cached(client):
     # A conditional re-request must come back 304, i.e. revalidation is cheap.
     again = client.get("/static/style.css", headers={"If-None-Match": r.headers["etag"]})
     assert again.status_code == 304
+
+
+# ---------------------------------------------------------------------------
+# YouTube liveness route
+#
+# The route must never fail loudly: it decorates a page whose real job is
+# streaming, so a YouTube outage has to read as "we don't know", not as an
+# error over a working stream.
+# ---------------------------------------------------------------------------
+
+def _ward_config(tmp_path, channel_id: str) -> Path:
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="hunter2"),
+        stream=StreamConfig(
+            wards=[Ward(name="Primary", key="abc-key", channel_id=channel_id)],
+            active_ward="Primary",
+        ),
+        advanced=AdvancedConfig(),
+    )
+    path = tmp_path / "config.toml"
+    cfg.save(path)
+    return path
+
+
+def test_api_youtube_reports_unconfigured_without_a_channel_id(
+    tmp_path, streamer, discovery
+):
+    config_path = _ward_config(tmp_path, "")
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/api/youtube", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "unconfigured"
+    # Still hands back somewhere useful to send the operator.
+    assert body["control_room_url"].startswith("https://studio.youtube.com/")
+
+
+def test_api_youtube_links_to_the_wards_control_room(
+    tmp_path, streamer, discovery, monkeypatch
+):
+    from ndi_rmtp import youtube
+
+    monkeypatch.setattr(youtube, "_fetch", lambda _: "<html></html>")
+    channel = "UCbLlSmx8Wvg85m8jPgruTuQ"
+    config_path = _ward_config(tmp_path, channel)
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/api/youtube", headers=_basic("admin", "hunter2"))
+    body = r.json()
+    assert channel in body["control_room_url"]
+    assert body["control_room_url"].endswith("/livestreaming/dashboard")
+
+
+def test_api_youtube_stays_200_when_youtube_is_unreachable(
+    tmp_path, streamer, discovery, monkeypatch
+):
+    import urllib.error
+
+    from ndi_rmtp import youtube
+
+    def boom(_):
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(youtube, "_fetch", boom)
+    config_path = _ward_config(tmp_path, "UCbLlSmx8Wvg85m8jPgruTuQ")
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/api/youtube", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    assert r.json()["state"] == "unavailable"
+
+
+def test_api_youtube_requires_auth(tmp_path, streamer, discovery):
+    config_path = _ward_config(tmp_path, "")
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        assert c.get("/api/youtube").status_code == 401

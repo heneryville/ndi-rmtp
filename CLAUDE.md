@@ -140,6 +140,49 @@ it. It's deliberately not validated against the discovery cache; cameras drop
 off the network for a beat and rejecting the write would lose the operator's
 choice.
 
+### YouTube liveness only ever reports POSITIVES
+
+`youtube.py` checks whether a ward's stream is live by fetching
+`youtube.com/channel/<channel_id>/live` and reading its
+`<link rel="canonical">`: a broadcast makes it a `watch?v=<id>` URL, nothing
+live leaves it the plain channel URL.
+
+**The UI must never render a negative as a problem.** `not_visible` and
+`unavailable` mean "we cannot tell", never "you are not live" — because an
+unlisted broadcast and a stream that never went live are byte-identical from
+outside. There is deliberately no warning styling in the YouTube CSS block.
+
+If you are tempted to add a "your stream isn't live!" alarm, these were all
+tried and all fail:
+
+- *Track whether the operator clicked our control-room link* — that is
+  inventing state we never observe.
+- *Only alarm wards we have seen live before* — a ward that has **never** gone
+  live (nobody ever creates the broadcast) is indistinguishable from an
+  unlisted one, so the worst-configured ward gets permanently silenced.
+- *Declare visibility per ward in config* — visibility is a property of each
+  **broadcast**, not the channel. A ward can be public one week, unlisted the
+  next.
+
+Sound detection needs the Live Streaming API with the ward's OAuth credentials
+(`liveBroadcasts.list` sees unlisted broadcasts directly). Until that exists,
+the appliance confirms what it can and stays quiet otherwise.
+
+Three implementation facts, all measured against live pages — the unit test
+fixtures alone will not catch you breaking these:
+
+- **Only the canonical href may be parsed for a video id.** An idle channel's
+  page still contains `watch?v=` links for other videos (Me279's has one ~769
+  KB in), so a body-wide search invents broadcasts. This was a real bug.
+- The canonical tag sits ~700–760 KB into a 0.8–1.3 MB page, so the read
+  cannot be cheaply truncated. Truncating turns every channel into
+  `not_visible`, which — because negatives are never surfaced — fails silently.
+- We request gzip (1.26 MB → ~297 KB). `"isLiveNow"` is **not** present on this
+  URL even though it appears on `/@handle/live`; `"isLive":true` is.
+
+`channel_id` is public info, optional, and lives in the committed example
+templates beside `key`. A missing or wrong value costs nothing.
+
 ### Config is the source of truth for the UI
 
 `src/ndi_rmtp/app.py` reloads `config.toml` on **every** request via

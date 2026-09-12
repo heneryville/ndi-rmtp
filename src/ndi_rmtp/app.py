@@ -10,10 +10,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from . import youtube
 from .auth import make_auth_dependency
 from .config import Config
 from .ndi import NDIDiscovery
 from .streamer import Streamer
+from .youtube import LivenessChecker
 
 # PtzController depends on cyndilib (an optional dependency). Only import for
 # type hints when available; the runtime treats `ptz` as an opaque object.
@@ -27,6 +29,14 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 
 _CPU_TEMP_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
+
+# Where we send an operator to create today's broadcast. Loading the Live
+# Control Room is what mints it — YouTube will accept RTMP into a channel with
+# no broadcast forever and never publish it, so this link is the fix, not a
+# convenience. With no channel_id we can still send them to Studio, which lands
+# on whichever account they are signed into (Create → Go Live from there).
+YOUTUBE_CONTROL_ROOM_URL = "https://studio.youtube.com/channel/{channel_id}/livestreaming/dashboard"
+YOUTUBE_STUDIO_URL = "https://studio.youtube.com/"
 
 
 def _read_cpu_temp_c() -> Optional[float]:
@@ -55,6 +65,7 @@ def build_app(
 ) -> FastAPI:
     app = FastAPI(title="ndi-rmtp")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    liveness = LivenessChecker()
 
     # Config is reloaded on every request so disk edits are picked up.
     def get_config() -> Config:
@@ -83,12 +94,22 @@ def build_app(
     @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
     def index(request: Request):
         cfg = get_config()
+        ward = cfg.stream.active()
+        channel_id = ward.channel_id if ward else ""
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "config": cfg,
                 "qualities": ["low", "medium", "high"],
+                # Rendered server-side so the link works on first paint,
+                # before /api/youtube has answered (or if it never does).
+                "youtube_url": (
+                    YOUTUBE_CONTROL_ROOM_URL.format(channel_id=channel_id)
+                    if youtube.valid_channel_id(channel_id)
+                    else YOUTUBE_STUDIO_URL
+                ),
+                "has_channel_id": youtube.valid_channel_id(channel_id),
             },
         )
 
@@ -113,6 +134,32 @@ def build_app(
     async def api_sources():
         sources = await discovery.list()
         return [{"name": s.name, "address": s.address} for s in sources]
+
+    @app.get("/api/youtube", dependencies=[Depends(require_auth)])
+    async def api_youtube():
+        """Best-effort liveness for the active ward's channel.
+
+        Returns a claim ("live"/"scheduled") or an admission of ignorance
+        ("not_visible"/"unavailable"/"unconfigured"). The UI must never turn
+        the latter into a warning — see youtube.py for why a negative
+        observation is uninformative here.
+
+        Always 200, even when the check fails: this is decoration on a page
+        whose real job is streaming, and a YouTube outage must not surface as
+        an error banner over a working stream.
+        """
+        cfg = get_config()
+        ward = cfg.stream.active()
+        channel_id = ward.channel_id if ward else ""
+        result = await liveness.check(channel_id)
+        data = result.to_dict()
+        data["channel_id"] = channel_id
+        data["control_room_url"] = (
+            YOUTUBE_CONTROL_ROOM_URL.format(channel_id=channel_id)
+            if youtube.valid_channel_id(channel_id)
+            else YOUTUBE_STUDIO_URL
+        )
+        return data
 
     @app.post("/api/start", dependencies=[Depends(require_auth)])
     async def api_start(

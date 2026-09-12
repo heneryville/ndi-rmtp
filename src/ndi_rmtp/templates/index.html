@@ -90,6 +90,35 @@
       </form>
     </section>
 
+    {# YouTube broadcast state, setup side. Deliberately a SUGGESTION, never a
+       gate: Start is always enabled. `#yt-setup-note` is rewritten by the
+       /api/youtube poll; the server-rendered copy is the honest default for
+       "we have not checked yet". #}
+    <section class="card setup-only" id="yt-setup-card">
+      <h2>YouTube</h2>
+      <div class="yt-line">
+        <span class="yt-dot" id="yt-setup-dot" aria-hidden="true"></span>
+        <div class="yt-body">
+          <div class="yt-headline" id="yt-setup-headline">Checking YouTube…</div>
+          <div class="yt-sub" id="yt-setup-note">
+            We can only see broadcasts that are public, so this may stay blank even when everything is fine.
+          </div>
+        </div>
+        <a class="yt-view" id="yt-setup-view" href="#" target="_blank" rel="noopener" hidden>View</a>
+      </div>
+      <div class="yt-actions">
+        <a class="btn-secondary" id="yt-open-setup"
+           href="{{ youtube_url }}" target="_blank" rel="noopener">Open Live Control Room ↗</a>
+        <span class="hint yt-why">
+          {% if has_channel_id %}
+          Optional, but it makes the first try more likely to work — YouTube needs today's broadcast to exist before the encoder connects.
+          {% else %}
+          Optional. Sign in as this ward, then choose Create → Go Live and let the page load. YouTube needs today's broadcast to exist before the encoder connects.
+          {% endif %}
+        </span>
+      </div>
+    </section>
+
     <!-- =====================================================================
          STREAMING PAGE  (visible when body[data-state] ∈ STARTING/STREAMING/STOPPING)
          ================================================================= -->
@@ -100,7 +129,43 @@
         <span class="chip-sep">·</span>
         <span class="chip-quality">{{ config.stream.quality }}</span>
       </div>
-      <div class="chip-uptime">00:00:00</div>
+      <div class="chip-right">
+        {# Only ever shown when we have positively seen the stream live.
+           Absence means "we cannot tell", never "you are not live". #}
+        <a class="chip-live" id="yt-live-pill" href="#" target="_blank" rel="noopener" hidden>✓ Live on YouTube</a>
+        <div class="chip-uptime">00:00:00</div>
+      </div>
+    </section>
+
+    {# Shown while streaming whenever we have NOT confirmed the stream live —
+       which covers both "unlisted, actually fine" and "never went live". We
+       cannot tell those apart, so this card diagnoses nothing; it leads with
+       the case that must not be got wrong (already live → do nothing) and then
+       offers the ordered fix. Hidden entirely once liveness is confirmed. #}
+    <section class="card streaming-only" id="yt-help-card" hidden>
+      <h2>Not showing as live on YouTube?</h2>
+      <p class="yt-sub yt-help-intro">
+        We cannot see this broadcast from outside. That is completely normal if it is
+        unlisted — and it also looks exactly like a stream that never went live, so we
+        are not going to guess which. <strong>Look at YouTube.</strong>
+      </p>
+      <div class="yt-ok-note">
+        <strong>If YouTube already says you are live — do nothing.</strong>
+        Reconnecting would interrupt people who are watching.
+      </div>
+      <div class="yt-steps">
+        <p class="yt-steps-lead">If it is stuck on “Preparing stream”, do these two in order:</p>
+        <div class="yt-steps-row">
+          <a class="btn-secondary" id="yt-open-live"
+             href="{{ youtube_url }}" target="_blank" rel="noopener"><span class="yt-num">1</span> Open Live Control Room ↗</a>
+          <button type="button" class="btn-secondary" id="yt-reconnect-btn"><span class="yt-num">2</span> <span class="yt-label">Reconnect</span></button>
+        </div>
+        <small class="hint">
+          Step 1 creates today's broadcast; step 2 restarts the encoder so YouTube picks
+          it up, and it goes live about 15 seconds later. A reconnect on its own will not
+          help — if the broadcast does not exist, there is nothing for YouTube to publish to.
+        </small>
+      </div>
     </section>
 
     {# Shared with /camera — see templates/_ptz.html. On this page the card
@@ -320,6 +385,116 @@
       return s.replace(/[<>&"']/g, c => (
         {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]
       ));
+    }
+
+    // ---- YouTube liveness ------------------------------------------------
+    // Renders ONLY positive claims. "not_visible" / "unavailable" mean we
+    // cannot tell — an unlisted broadcast looks exactly like one that never
+    // went live — so neither is ever styled as a problem. See youtube.py.
+    const ytCard    = document.getElementById("yt-setup-card");
+    const ytHead    = document.getElementById("yt-setup-headline");
+    const ytNote    = document.getElementById("yt-setup-note");
+    const ytView    = document.getElementById("yt-setup-view");
+    const ytPill    = document.getElementById("yt-live-pill");
+    const ytHelp    = document.getElementById("yt-help-card");
+    const ytOpenEls = [document.getElementById("yt-open-setup"),
+                       document.getElementById("yt-open-live")].filter(Boolean);
+
+    const YT_COPY = {
+      live:         ["A broadcast is live on this channel", "Nothing to do — you can start when ready."],
+      scheduled:    ["Broadcast is ready on YouTube", "Nothing to do — you can start when ready."],
+      not_visible:  ["No broadcast visible on this channel",
+                     "Normal if this ward's stream is unlisted — we can only see public ones."],
+      unavailable:  ["Could not reach YouTube",
+                     "We will keep trying. This does not affect streaming."],
+      unconfigured: ["Not checking YouTube for this ward",
+                     "No channel ID is set, so we cannot look. Streaming is unaffected."],
+    };
+
+    async function pollYouTube() {
+      let data;
+      try {
+        const r = await fetch("/api/youtube");
+        if (!r.ok) return;
+        data = await r.json();
+      } catch (_) { return; }   // offline: leave the last render in place
+
+      const [headline, note] = YT_COPY[data.state] || YT_COPY.unavailable;
+      if (ytCard) ytCard.dataset.yt = data.state;
+      if (ytHead) ytHead.textContent = headline;
+      if (ytNote) ytNote.textContent = note;
+
+      if (ytView) {
+        const show = Boolean(data.watch_url) && data.state !== "not_visible";
+        ytView.hidden = !show;
+        if (show) ytView.href = data.watch_url;
+      }
+      if (data.control_room_url) {
+        for (const el of ytOpenEls) el.href = data.control_room_url;
+      }
+
+      // The pill is the only liveness claim on the streaming page, and the
+      // help card is its exact complement — never both, never neither.
+      const confirmedLive = data.state === "live";
+      if (ytPill) {
+        ytPill.hidden = !confirmedLive;
+        if (confirmedLive && data.watch_url) ytPill.href = data.watch_url;
+      }
+      if (ytHelp) ytHelp.hidden = confirmedLive;
+    }
+
+    // Poll faster while streaming (the answer is changing) than at rest. Each
+    // check pulls ~300 KB of gzipped YouTube page, so this is deliberately not
+    // aggressive — it is download bandwidth, which does not contend with the
+    // RTMP upload, but there is no reason to spend it freely either.
+    let _ytTimer = null;
+    function scheduleYouTube() {
+      clearTimeout(_ytTimer);
+      const streaming = document.body.dataset.state === "STREAMING";
+      _ytTimer = setTimeout(async () => {
+        await pollYouTube();
+        scheduleYouTube();
+      }, streaming ? 30000 : 120000);
+    }
+    pollYouTube().then(scheduleYouTube);
+
+    // ---- Reconnect -------------------------------------------------------
+    // Stop, wait for the streamer to actually reach IDLE, then start again
+    // with the same settings. This is the documented cure for a stream that
+    // YouTube never published: opening the control room mints the broadcast,
+    // and only a fresh RTMP session gets picked up by it.
+    const ytReconnect = document.getElementById("yt-reconnect-btn");
+    if (ytReconnect) {
+      ytReconnect.addEventListener("click", async () => {
+        const form = document.getElementById("start-form");
+        if (!form) return;
+        // Swap only the label span — textContent would eat the step number.
+        const label = ytReconnect.querySelector(".yt-label");
+        const original = label.textContent;
+        ytReconnect.disabled = true;
+        label.textContent = "Reconnecting…";
+        try {
+          await fetch("/api/stop", { method: "POST" });
+          // Don't race the restart against a subprocess still shutting down —
+          // /api/start would fail on a busy streamer.
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const s = await fetch("/api/status").then(r => r.json()).catch(() => null);
+            if (s && (s.state === "IDLE" || s.state === "ERROR")) break;
+          }
+          const resp = await fetch("/api/start", { method: "POST", body: new FormData(form) });
+          if (!resp.ok) {
+            let msg = `Reconnect failed (HTTP ${resp.status}).`;
+            try { const d = await resp.json(); if (d.detail) msg = d.detail; } catch (_) {}
+            showFlash(msg);
+          }
+        } catch (_) {
+          showFlash("Reconnect failed. Press Stop, then Start.");
+        } finally {
+          ytReconnect.disabled = false;
+          label.textContent = original;
+        }
+      });
     }
 
     // Convert /api/sources JSON into <option>s on the source <select>

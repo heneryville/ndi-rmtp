@@ -144,10 +144,16 @@ install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$SVC_CFG_DIR"
 # working clone as config.<south|north>.toml (git-ignored). If that file
 # is present it gets copied to the service user's config.toml; otherwise
 # we fall back to the tracked config.<south|north>.example.toml template
-# (placeholder keys) so the service still boots — you then fill in the
-# real keys via the UI or by editing the on-device config.toml.
-# Re-running install.sh asks again — pick `keep` to preserve any
-# in-place UI edits.
+# (placeholder keys) so the service still boots.
+#
+# Stream keys and channel IDs are NOT part of this file any more. They are
+# entered on the /setup page and stored device-locally in credentials.toml
+# beside config.toml, which OVERLAYS whatever the deployed config holds. This
+# script must never write, copy or delete that file: config.toml is replaced
+# wholesale on a south/north deploy, so keys kept there would be wiped on the
+# next deploy — with placeholder text, on any clone lacking the git-ignored
+# config.<deployment>.toml. Keeping them separate is what makes a deploy safe
+# to run mid-season.
 DEPLOYMENT="${NDI_RMTP_DEPLOYMENT:-}"
 if [[ -z "$DEPLOYMENT" ]]; then
   printf "\nWhich deployment is this appliance?\n  [s]outh  -> Jordan Willows 1st/7th + Snow Springs (snowspringssouth.local)\n  [n]orth  -> Jordan Willows 2nd, Lehi 25th, Pioneer Crossing, Sommerset (snowspringsnorth.local)\n  [k]eep   -> leave existing config.toml alone (use this for code-only updates)\nChoose [s/n/k]: "
@@ -168,7 +174,7 @@ case "$DEPLOYMENT" in
       SRC_CFG="$PROJECT_ROOT/config.$DEPLOYMENT.example.toml"
       [[ -f "$SRC_CFG" ]] || { echo "Missing config.$DEPLOYMENT.toml and its .example template"; exit 1; }
       say "No config.$DEPLOYMENT.toml (secret configs are git-ignored); installing PLACEHOLDER template -> $SVC_CFG"
-      say "  !! Stream keys are placeholders — fill in real YouTube keys via the UI or by editing $SVC_CFG"
+      say "  !! Placeholder keys in $SVC_CFG — but credentials.toml (if present) overrides them; check /setup"
     fi
     install -o "$SVC_USER" -g "$SVC_USER" -m 0600 "$SRC_CFG" "$SVC_CFG"
     ;;
@@ -177,6 +183,14 @@ case "$DEPLOYMENT" in
     ;;
   *) echo "Bad NDI_RMTP_DEPLOYMENT=$DEPLOYMENT (want south|north|keep)"; exit 1 ;;
 esac
+
+# Deliberately only reported, never touched — see the note above.
+SVC_CREDS="$SVC_CFG_DIR/credentials.toml"
+if [[ -f "$SVC_CREDS" ]]; then
+  say "Keeping device-local credentials.toml (stream keys entered via /setup)"
+else
+  say "No credentials.toml on this appliance yet — enter stream keys at http://<host>/setup"
+fi
 
 # --- systemd unit ---
 say "Installing systemd unit"

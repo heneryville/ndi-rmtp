@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import youtube
 from .auth import make_auth_dependency
-from .config import Config
+from .config import Config, Credentials, credentials_path_for
 from .ndi import NDIDiscovery
 from .streamer import Streamer
 from .youtube import LivenessChecker
@@ -50,6 +50,19 @@ def _read_cpu_temp_c() -> Optional[float]:
         return round(millideg / 1000, 1)
     except (OSError, ValueError):
         return None
+
+
+def _mask_key(key: str) -> str:
+    """Show only enough of a stream key to tell two apart.
+
+    Never send the full value to a browser: the page is reachable by anyone on
+    the LAN when Basic auth is off, and an operator never needs to read a key
+    back — they copy it from YouTube Studio and paste it in.
+    """
+    key = (key or "").strip()
+    if not key or key.startswith("REPLACE_WITH"):
+        return ""
+    return f"…{key[-4:]}" if len(key) > 4 else "…"
 
 
 def _clamp_speed(v: float) -> float:
@@ -123,6 +136,83 @@ def build_app(
             "camera.html",
             {"config": get_config()},
         )
+
+    @app.get("/setup", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+    def setup(request: Request):
+        """Per-ward stream key + channel ID, for the Stake Technology Specialist.
+
+        Wards themselves are still enumerated in config.toml; this page only
+        edits the two values a human has to copy out of YouTube Studio.
+        """
+        cfg = get_config()
+        creds = Credentials.load(credentials_path_for(config_path))
+        wards = [
+            {
+                "name": w.name,
+                # Never send a key to the browser. The last 4 characters are
+                # enough to tell two keys apart — CONFIG_CHANGELOG.md already
+                # identifies keys that way — and are what an operator can check
+                # against YouTube Studio without the secret leaving the device.
+                "key_hint": _mask_key(w.key),
+                "has_key": bool(w.key) and not w.key.startswith("REPLACE_WITH"),
+                "key_is_local": bool(creds.for_ward(w.name).key),
+                "channel_id": w.channel_id,
+            }
+            for w in cfg.stream.wards
+        ]
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {
+                "config": cfg,
+                "wards": wards,
+                "credentials_path": str(credentials_path_for(config_path)),
+                # Anyone on the LAN can reach this page when Basic auth is off.
+                # Keys are write-only so nothing leaks, but a stranger could
+                # still overwrite them, which takes a ward off the air.
+                "auth_disabled": not cfg.auth.enabled,
+            },
+        )
+
+    @app.post("/api/ward-credentials", dependencies=[Depends(require_auth)])
+    def api_ward_credentials(
+        ward: str = Form(...),
+        key: str = Form(""),
+        channel_id: str = Form(""),
+    ):
+        cfg = get_config()
+        if cfg.stream.find_ward(ward) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No ward named {ward!r} on this appliance. Wards are listed in config.toml.",
+            )
+        channel_id = channel_id.strip()
+        if channel_id and not youtube.valid_channel_id(channel_id):
+            raise HTTPException(
+                status_code=400,
+                detail="That doesn't look like a channel ID. It starts with "
+                       "'UC' and is 24 characters — copy it from the Studio address bar.",
+            )
+
+        creds_path = credentials_path_for(config_path)
+        creds = Credentials.load(creds_path)
+        # A blank key means "leave it alone", not "erase it" — the form never
+        # shows the current key, so an untouched field must not wipe it. Erasing
+        # is a separate, explicit action (send key="-").
+        new_key = None
+        if key == "-":
+            new_key = ""
+        elif key.strip():
+            new_key = key.strip()
+        creds.set_ward(ward, key=new_key, channel_id=channel_id)
+        creds.save(creds_path)
+        logger.info(
+            "updated credentials for ward %r (key %s, channel_id %s)",
+            ward,
+            "changed" if new_key is not None else "unchanged",
+            "set" if channel_id else "cleared",
+        )
+        return {"ok": True, "ward": ward}
 
     @app.get("/api/status", dependencies=[Depends(require_auth)])
     def api_status():

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>Ward setup — NDI → YouTube Relay</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body class="setup-page">
+  <header>
+    <h1>Ward setup</h1>
+    <div id="state-badge"
+         title="Config generation — increments on each deploy.">v{{ config.config_version }}</div>
+    <a class="page-link" href="/">← Back to stream</a>
+  </header>
+
+  <div id="flash" class="flash flash-error" hidden></div>
+
+  <main>
+    {% if auth_disabled %}
+    <section class="card setup-warn">
+      <h2>This page is unprotected</h2>
+      <p class="setup-warn-body">
+        HTTP Basic auth is turned off on this appliance, so anyone on this network can
+        reach this page. Stream keys are never shown here, but a stranger could still
+        overwrite one and take a ward off the air. Set <code>[auth] enabled = true</code>
+        in <code>config.toml</code>.
+      </p>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>How this works</h2>
+      <p class="setup-intro">
+        Wards are listed in <code>config.toml</code> and can only be added or renamed
+        there. What you enter here — the stream key and the channel ID — is saved on
+        <strong>this appliance only</strong>, in
+        <code>{{ credentials_path }}</code>, and is never overwritten by a deploy.
+      </p>
+    </section>
+
+    {% if not wards %}
+    <section class="card">
+      <p class="err">No wards are listed in <code>config.toml</code> on this appliance.
+        Add them there first, then come back to enter their keys.</p>
+    </section>
+    {% else %}
+    {% for w in wards %}
+    <section class="card ward-card">
+      <h2>{{ w.name }}</h2>
+      <form class="ward-form"
+            hx-post="/api/ward-credentials"
+            hx-swap="none"
+            data-ward="{{ w.name }}">
+        <input type="hidden" name="ward" value="{{ w.name }}">
+
+        <label>Stream key
+          <input type="password" name="key" autocomplete="off" spellcheck="false"
+                 placeholder="{% if w.has_key %}Saved — leave blank to keep it{% else %}Paste the key from YouTube Studio{% endif %}">
+          <small class="hint">
+            {% if w.has_key %}
+            Currently set, ending <code>{{ w.key_hint }}</code>{% if not w.key_is_local %} (from <code>config.toml</code>){% endif %}.
+            Leave blank to keep it — it is never shown back to you.
+            {% else %}
+            Not set yet. YouTube Studio → Go Live → Stream key.
+            {% endif %}
+          </small>
+        </label>
+
+        <label>YouTube channel ID <span class="optional">optional</span>
+          <input type="text" name="channel_id" value="{{ w.channel_id }}"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="UCxxxxxxxxxxxxxxxxxxxxxx">
+          <small class="hint">
+            Public, not a secret. Copy the <code>UC…</code> part out of the Studio address
+            bar: <code>studio.youtube.com/channel/<strong>UC…</strong>/</code>. Enables the
+            one-tap Live Control Room link and the “Live on YouTube” confirmation.
+          </small>
+        </label>
+
+        <div class="ward-actions">
+          <button type="submit" class="btn-primary">Save {{ w.name }}</button>
+          <span class="ward-saved" hidden>Saved</span>
+        </div>
+      </form>
+    </section>
+    {% endfor %}
+    {% endif %}
+  </main>
+
+  <footer class="site-footer">
+    Contact the Stake Technology Specialist for training or issues
+  </footer>
+
+  <script>
+    // Reuse the flash pattern from the stream page: htmx swallows non-2xx by
+    // default, and the server's messages here are the useful ones ("that
+    // doesn't look like a channel ID").
+    const _flashEl = document.getElementById("flash");
+    let _flashTimer = null;
+    function showFlash(msg) {
+      _flashEl.textContent = msg;
+      _flashEl.hidden = false;
+      clearTimeout(_flashTimer);
+      _flashTimer = setTimeout(() => { _flashEl.hidden = true; }, 8000);
+    }
+    document.body.addEventListener("htmx:responseError", (evt) => {
+      const xhr = evt.detail.xhr;
+      let msg = `Could not save (HTTP ${xhr.status}).`;
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data && data.detail) msg = data.detail;
+      } catch (_) { /* keep the fallback */ }
+      showFlash(msg);
+    });
+
+    document.body.addEventListener("htmx:afterRequest", (evt) => {
+      if (!evt.detail?.successful) return;
+      const form = evt.detail.elt?.closest?.(".ward-form");
+      if (!form) return;
+      // Clear the key box so a saved secret never lingers in the DOM, and so a
+      // second save doesn't resubmit it.
+      const keyInput = form.querySelector('input[name="key"]');
+      if (keyInput) {
+        keyInput.value = "";
+        keyInput.placeholder = "Saved — leave blank to keep it";
+      }
+      const badge = form.querySelector(".ward-saved");
+      if (badge) {
+        badge.hidden = false;
+        setTimeout(() => { badge.hidden = true; }, 3000);
+      }
+    });
+  </script>
+</body>
+</html>

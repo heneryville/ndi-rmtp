@@ -23,6 +23,10 @@ uv.lock
 
 # Quarantine file written when a malformed config is found at boot.
 # Never commit — may contain partial/corrupted secrets.
+# Device-local per-ward stream keys entered via /setup. NEVER commit, and
+# install.sh must never deploy or overwrite it.
+/credentials.toml
+
 /config.broken.toml
 
 # Dev artifacts

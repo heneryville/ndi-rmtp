@@ -140,6 +140,36 @@ it. It's deliberately not validated against the discovery cache; cameras drop
 off the network for a beat and rejecting the write would lose the operator's
 choice.
 
+### Stream keys live in `credentials.toml`, not `config.toml`
+
+Wards are **enumerated** in `config.toml` (`name`, `sacrament_image`) and can
+only be added or renamed there. But `key` and `channel_id` are entered on
+`/setup` and stored device-locally in `credentials.toml` beside it, which
+overlays whatever the deployed config holds.
+
+The split exists because `install.sh` replaces `config.toml` **wholesale** on a
+south/north deploy. Keys kept there would be wiped on the next deploy — and
+wiped with `REPLACE_WITH_…` placeholder text on any clone that lacks the
+git-ignored `config.<deployment>.toml`. `install.sh` reports the file's
+presence and must never write, copy or delete it.
+
+Two asymmetries to preserve:
+
+- **`Config.load` overlays, `Config.save` un-overlays.** `save()` writes back
+  the ward key/channel_id that `config.toml` originally held (captured in
+  `Config._file_credentials`, a `ClassVar` so `asdict()` can't serialize it).
+  Without that, any ordinary save — and the UI saves on nearly every request to
+  persist quality / active_ward / last_source — would copy device-local secrets
+  into the deployed file. There is a test for exactly this.
+- **A blank key means "leave alone", not "erase".** The form never shows the
+  current key, so an untouched field must not wipe it; editing only the channel
+  ID would otherwise take a ward off the air. Erasing is explicit (`key="-"`).
+
+Keys are **write-only** in the UI: `/setup` renders only the last 4 characters
+(the same way `CONFIG_CHANGELOG.md` identifies keys) and no endpoint ever
+returns a full key. The page warns when `[auth] enabled = false`, since anyone
+on the LAN could then overwrite a key and take a ward off the air.
+
 ### YouTube liveness only ever reports POSITIVES
 
 `youtube.py` checks whether a ward's stream is live by fetching

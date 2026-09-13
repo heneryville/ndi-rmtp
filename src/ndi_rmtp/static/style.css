@@ -517,6 +517,35 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   font-size: 0.75rem;
 }
 
+/* -------------------------------------------------------------------------
+ * /setup — per-ward stream key + channel ID
+ *
+ * No sticky action bar here (nothing starts or stops), so no bottom reserve.
+ * ----------------------------------------------------------------------- */
+body.setup-page { padding-bottom: 1.5rem; }
+.setup-intro, .setup-warn-body { margin: 0; font-size: 0.85rem; line-height: 1.55; color: var(--muted); }
+.setup-intro code, .setup-warn-body code {
+  background: var(--surface-2); padding: 1px 4px; border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
+}
+.setup-intro strong, .setup-warn-body strong { color: var(--text); }
+.setup-warn { border-color: var(--danger-2); }
+.setup-warn h2 { color: #f87171; }
+.ward-card h2 { font-size: 0.95rem; color: var(--text); text-transform: none; letter-spacing: 0; }
+.ward-form label:last-of-type { margin-bottom: 1rem; }
+.optional { color: var(--muted); font-weight: 400; font-size: 0.78rem; margin-left: 0.35rem; }
+.ward-actions { display: flex; align-items: center; gap: 0.75rem; }
+.ward-saved { color: #4ade80; font-size: 0.85rem; }
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 0 1rem;
+  background: var(--primary); color: #fff;
+  border: 0; border-radius: 8px;
+  font: inherit; font-weight: 600; font-size: 0.95rem; cursor: pointer;
+}
+.btn-primary:hover { background: var(--primary-2); }
+.btn-primary:active { transform: scale(0.98); }
+
 .site-footer {
   text-align: center;
   padding: 1rem 1rem 0.5rem;
@@ -550,3 +579,7 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   #ptz-card > .ptz-manual { grid-area: manual; margin-top: 0.5rem; }
   #ptz-card > #presets-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+.footer-sep { color: #4b5563; margin: 0 0.35rem; }
+.footer-link { color: #6b7280; text-decoration: underline; }
+.footer-link:hover { color: var(--muted); }

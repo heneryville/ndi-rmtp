@@ -14,6 +14,9 @@ often need to trace.
 
 ## South (`config.south.toml`)
 
+- **v5** — 2026-09-13 — Pointed Snow Springs Ward at the Jordan Willows 7th
+  key (`…-dew5` → `…-7jt7`); its own key was deleted in YouTube Studio. All
+  three non-test South wards now share one key, so they share one channel.
 - **v4** — 2026-09-07 — No config changes. Bumped to stamp the deploy that adds
   the `/camera` PTZ-only page (for wards encoding in OBS). No stream-key changes.
 - **v3** — 2026-08-29 — Restored `quality = "high"` (1080p30 @ 6 Mbps); the

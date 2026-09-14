@@ -441,6 +441,74 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   cursor: not-allowed;
 }
 
+/* -------------------------------------------------------------------------
+ * YouTube liveness
+ *
+ * The one rule here: we only ever render POSITIVE claims. Seeing a broadcast
+ * proves one exists; not seeing one proves nothing, because an unlisted
+ * broadcast is indistinguishable from a stream that never went live. So there
+ * is deliberately no error/warning styling in this block — nothing amber, no
+ * banner. See youtube.py for the three detection schemes this replaced.
+ * ----------------------------------------------------------------------- */
+.yt-line { display: flex; align-items: flex-start; gap: 0.6rem; }
+.yt-body { flex: 1; min-width: 0; }
+.yt-headline { font-size: 0.95rem; font-weight: 600; }
+.yt-sub { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin-top: 0.25rem; }
+.yt-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--slate-3); flex-shrink: 0; margin-top: 6px;
+}
+/* Green only once we have actually seen it. */
+#yt-setup-card[data-yt="live"] .yt-dot,
+#yt-setup-card[data-yt="scheduled"] .yt-dot { background: #4ade80; }
+.yt-view { font-size: 0.78rem; flex-shrink: 0; margin-top: 2px; }
+.yt-actions {
+  margin-top: 0.85rem; padding-top: 0.75rem; border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+}
+.yt-why { flex: 1; min-width: 220px; margin-top: 0; }
+/* Once a broadcast is visible there is nothing to suggest — hide the nudge
+   rather than inviting a pointless second trip to YouTube. */
+#yt-setup-card[data-yt="live"] .yt-actions,
+#yt-setup-card[data-yt="scheduled"] .yt-actions { display: none; }
+
+.btn-secondary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  min-height: 44px; padding: 0 0.9rem;
+  background: var(--slate); color: var(--text); text-decoration: none;
+  border: 1px solid var(--slate-2); border-radius: 8px;
+  font: inherit; font-weight: 600; font-size: 0.9rem;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--slate-2); }
+.btn-secondary:active { transform: scale(0.98); }
+.yt-num {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--slate-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 700;
+}
+
+.chip-right { display: flex; align-items: center; gap: 0.85rem; flex-shrink: 0; }
+.chip-live {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.78rem; text-decoration: none; white-space: nowrap;
+  color: #4ade80; border: 1px solid #1e3a2a; background: #0a2517;
+  border-radius: 999px; padding: 0.25rem 0.6rem;
+}
+
+.yt-ok-note {
+  color: #86efac; background: #0a2517; border: 1px solid #1e3a2a;
+  border-radius: 6px; padding: 0.65rem 0.75rem;
+  font-size: 0.85rem; line-height: 1.5; margin: 0.6rem 0;
+}
+.yt-steps {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.75rem;
+}
+.yt-steps-lead { margin: 0 0 0.7rem; font-size: 0.85rem; color: #c9ccd1; line-height: 1.5; }
+.yt-steps-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.yt-help-intro { margin: 0; }
+
 .hint {
   display: block; color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem;
 }
@@ -448,6 +516,35 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   background: var(--surface-2); padding: 1px 4px; border-radius: 3px;
   font-size: 0.75rem;
 }
+
+/* -------------------------------------------------------------------------
+ * /setup — per-ward stream key + channel ID
+ *
+ * No sticky action bar here (nothing starts or stops), so no bottom reserve.
+ * ----------------------------------------------------------------------- */
+body.setup-page { padding-bottom: 1.5rem; }
+.setup-intro, .setup-warn-body { margin: 0; font-size: 0.85rem; line-height: 1.55; color: var(--muted); }
+.setup-intro code, .setup-warn-body code {
+  background: var(--surface-2); padding: 1px 4px; border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
+}
+.setup-intro strong, .setup-warn-body strong { color: var(--text); }
+.setup-warn { border-color: var(--danger-2); }
+.setup-warn h2 { color: #f87171; }
+.ward-card h2 { font-size: 0.95rem; color: var(--text); text-transform: none; letter-spacing: 0; }
+.ward-form label:last-of-type { margin-bottom: 1rem; }
+.optional { color: var(--muted); font-weight: 400; font-size: 0.78rem; margin-left: 0.35rem; }
+.ward-actions { display: flex; align-items: center; gap: 0.75rem; }
+.ward-saved { color: #4ade80; font-size: 0.85rem; }
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 0 1rem;
+  background: var(--primary); color: #fff;
+  border: 0; border-radius: 8px;
+  font: inherit; font-weight: 600; font-size: 0.95rem; cursor: pointer;
+}
+.btn-primary:hover { background: var(--primary-2); }
+.btn-primary:active { transform: scale(0.98); }
 
 .site-footer {
   text-align: center;
@@ -482,3 +579,7 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   #ptz-card > .ptz-manual { grid-area: manual; margin-top: 0.5rem; }
   #ptz-card > #presets-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+.footer-sep { color: #4b5563; margin: 0 0.35rem; }
+.footer-link { color: #6b7280; text-decoration: underline; }
+.footer-link:hover { color: var(--muted); }

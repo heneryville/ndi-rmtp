@@ -6,7 +6,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ndi_rmtp.app import build_app
-from ndi_rmtp.config import AdvancedConfig, AuthConfig, Config, StreamConfig, Ward
+from ndi_rmtp.config import (
+    AdvancedConfig,
+    AuthConfig,
+    Config,
+    Credentials,
+    StreamConfig,
+    Ward,
+    credentials_path_for,
+)
 from ndi_rmtp.ndi import Source
 
 
@@ -330,3 +338,198 @@ def test_static_assets_are_revalidated_not_blindly_cached(client):
     # A conditional re-request must come back 304, i.e. revalidation is cheap.
     again = client.get("/static/style.css", headers={"If-None-Match": r.headers["etag"]})
     assert again.status_code == 304
+
+
+# ---------------------------------------------------------------------------
+# YouTube liveness route
+#
+# The route must never fail loudly: it decorates a page whose real job is
+# streaming, so a YouTube outage has to read as "we don't know", not as an
+# error over a working stream.
+# ---------------------------------------------------------------------------
+
+def _ward_config(tmp_path, channel_id: str) -> Path:
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="hunter2"),
+        stream=StreamConfig(
+            wards=[Ward(name="Primary", key="abc-key", channel_id=channel_id)],
+            active_ward="Primary",
+        ),
+        advanced=AdvancedConfig(),
+    )
+    path = tmp_path / "config.toml"
+    cfg.save(path)
+    return path
+
+
+def test_api_youtube_reports_unconfigured_without_a_channel_id(
+    tmp_path, streamer, discovery
+):
+    config_path = _ward_config(tmp_path, "")
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/api/youtube", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "unconfigured"
+    # Still hands back somewhere useful to send the operator.
+    assert body["control_room_url"].startswith("https://studio.youtube.com/")
+
+
+def test_api_youtube_links_to_the_wards_control_room(
+    tmp_path, streamer, discovery, monkeypatch
+):
+    from ndi_rmtp import youtube
+
+    monkeypatch.setattr(youtube, "_fetch", lambda _: "<html></html>")
+    channel = "UCbLlSmx8Wvg85m8jPgruTuQ"
+    config_path = _ward_config(tmp_path, channel)
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/api/youtube", headers=_basic("admin", "hunter2"))
+    body = r.json()
+    assert channel in body["control_room_url"]
+    assert body["control_room_url"].endswith("/livestreaming/dashboard")
+
+
+def test_api_youtube_stays_200_when_youtube_is_unreachable(
+    tmp_path, streamer, discovery, monkeypatch
+):
+    import urllib.error
+
+    from ndi_rmtp import youtube
+
+    def boom(_):
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(youtube, "_fetch", boom)
+    config_path = _ward_config(tmp_path, "UCbLlSmx8Wvg85m8jPgruTuQ")
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/api/youtube", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    assert r.json()["state"] == "unavailable"
+
+
+def test_api_youtube_requires_auth(tmp_path, streamer, discovery):
+    config_path = _ward_config(tmp_path, "")
+    app = build_app(config_path, streamer, discovery)
+    with TestClient(app) as c:
+        assert c.get("/api/youtube").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /setup — per-ward credentials
+# ---------------------------------------------------------------------------
+
+def _setup_app(tmp_path, streamer, discovery, *, key="REPLACE_WITH_YOUR_YOUTUBE_STREAM_KEY",
+               auth_enabled=True):
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="hunter2", enabled=auth_enabled),
+        stream=StreamConfig(
+            wards=[Ward(name="Primary", key=key), Ward(name="Second", key="")],
+            active_ward="Primary",
+        ),
+        advanced=AdvancedConfig(),
+    )
+    config_path = tmp_path / "config.toml"
+    cfg.save(config_path)
+    return build_app(config_path, streamer, discovery), config_path
+
+
+def test_setup_page_lists_wards_from_config(tmp_path, streamer, discovery):
+    app, _ = _setup_app(tmp_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.get("/setup", headers=_basic("admin", "hunter2"))
+    assert r.status_code == 200
+    assert "Primary" in r.text and "Second" in r.text
+
+
+def test_setup_page_never_sends_the_stream_key_to_the_browser(tmp_path, streamer, discovery):
+    """The page is reachable by anyone on the LAN when auth is off, and an
+    operator never needs to read a key back."""
+    secret = "abcd-efgh-ijkl-mnop-qrst"
+    app, config_path = _setup_app(tmp_path, streamer, discovery, key=secret)
+    with TestClient(app) as c:
+        r = c.get("/setup", headers=_basic("admin", "hunter2"))
+    assert secret not in r.text
+    assert "qrst" in r.text          # last 4 only, enough to tell keys apart
+
+
+def test_setup_page_warns_when_auth_is_disabled(tmp_path, streamer, discovery):
+    app, _ = _setup_app(tmp_path, streamer, discovery, auth_enabled=False)
+    with TestClient(app) as c:
+        r = c.get("/setup")
+    assert "unprotected" in r.text.lower()
+
+
+def test_saving_a_key_writes_credentials_not_config(tmp_path, streamer, discovery):
+    app, config_path = _setup_app(tmp_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/ward-credentials",
+            data={"ward": "Primary", "key": "real-key-9999", "channel_id": ""},
+            headers=_basic("admin", "hunter2"),
+        )
+    assert r.status_code == 200
+    assert "real-key-9999" not in config_path.read_text()
+    creds = Credentials.load(credentials_path_for(config_path))
+    assert creds.for_ward("Primary").key == "real-key-9999"
+    # And the running app now serves the overlaid value.
+    assert Config.load(config_path).stream.find_ward("Primary").key == "real-key-9999"
+
+
+def test_blank_key_leaves_the_saved_one_alone(tmp_path, streamer, discovery):
+    """The form never shows the current key, so an untouched field must not
+    wipe it — otherwise editing only the channel ID takes a ward off the air."""
+    app, config_path = _setup_app(tmp_path, streamer, discovery)
+    headers = _basic("admin", "hunter2")
+    with TestClient(app) as c:
+        c.post("/api/ward-credentials",
+               data={"ward": "Primary", "key": "keep-me-1234", "channel_id": ""},
+               headers=headers)
+        c.post("/api/ward-credentials",
+               data={"ward": "Primary", "key": "", "channel_id": "UCbLlSmx8Wvg85m8jPgruTuQ"},
+               headers=headers)
+    creds = Credentials.load(credentials_path_for(config_path))
+    assert creds.for_ward("Primary").key == "keep-me-1234"
+    assert creds.for_ward("Primary").channel_id == "UCbLlSmx8Wvg85m8jPgruTuQ"
+
+
+def test_key_can_be_explicitly_cleared(tmp_path, streamer, discovery):
+    app, config_path = _setup_app(tmp_path, streamer, discovery)
+    headers = _basic("admin", "hunter2")
+    with TestClient(app) as c:
+        c.post("/api/ward-credentials",
+               data={"ward": "Primary", "key": "bye-1234", "channel_id": ""}, headers=headers)
+        c.post("/api/ward-credentials",
+               data={"ward": "Primary", "key": "-", "channel_id": ""}, headers=headers)
+    assert Credentials.load(credentials_path_for(config_path)).for_ward("Primary").key == ""
+
+
+def test_rejects_a_bad_channel_id(tmp_path, streamer, discovery):
+    app, _ = _setup_app(tmp_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.post("/api/ward-credentials",
+                   data={"ward": "Primary", "key": "", "channel_id": "not-a-channel"},
+                   headers=_basic("admin", "hunter2"))
+    assert r.status_code == 400
+    assert "channel ID" in r.json()["detail"]
+
+
+def test_rejects_a_ward_not_in_config(tmp_path, streamer, discovery):
+    """Wards are enumerated in config.toml; this page must not invent them."""
+    app, config_path = _setup_app(tmp_path, streamer, discovery)
+    with TestClient(app) as c:
+        r = c.post("/api/ward-credentials",
+                   data={"ward": "Nonexistent", "key": "x", "channel_id": ""},
+                   headers=_basic("admin", "hunter2"))
+    assert r.status_code == 400
+    assert not credentials_path_for(config_path).exists()
+
+
+def test_setup_routes_require_auth(tmp_path, streamer, discovery):
+    app, _ = _setup_app(tmp_path, streamer, discovery)
+    with TestClient(app) as c:
+        assert c.get("/setup").status_code == 401
+        assert c.post("/api/ward-credentials", data={"ward": "Primary"}).status_code == 401

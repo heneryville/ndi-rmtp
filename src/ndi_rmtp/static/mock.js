@@ -121,6 +121,25 @@
     if (u.startsWith("/api/ptz/info"))  return { status: 200, json: ptzInfoPayload() };
     if (u.startsWith("/api/preview.jpg")) return { status: 200, blob: await fakePreviewBlob(), contentType: "image/jpeg" };
     if (u.startsWith("/api/sources"))   return { status: 200, json: [{ name: mock.source, address: "192.168.110.9" }] };
+    // Cycle the YouTube liveness states so both branches of the UI (the green
+    // "Live on YouTube" pill and its complement, the help card) are reachable
+    // without a real channel. `?yt=<state>` pins one.
+    if (u.startsWith("/api/youtube")) {
+      const pinned = new URLSearchParams(location.search).get("yt");
+      const state = pinned || (mock.state === "STREAMING" ? "not_visible" : "scheduled");
+      return {
+        status: 200,
+        json: {
+          state,
+          video_id: state === "live" || state === "scheduled" ? "dQw4w9WgXcQ" : "",
+          watch_url: state === "live" || state === "scheduled"
+            ? "https://www.youtube.com/watch?v=dQw4w9WgXcQ" : "",
+          checked_at: Date.now() / 1000,
+          channel_id: "UCbLlSmx8Wvg85m8jPgruTuQ",
+          control_room_url: "https://studio.youtube.com/channel/UCbLlSmx8Wvg85m8jPgruTuQ/livestreaming/dashboard",
+        },
+      };
+    }
     if (u.startsWith("/api/start") && method === "POST") {
       if (mock.state !== "IDLE" && mock.state !== "ERROR") return { status: 409, json: { detail: "stream already running" } };
       mock.state = "STARTING";

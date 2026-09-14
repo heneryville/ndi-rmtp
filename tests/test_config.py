@@ -3,7 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from ndi_rmtp.config import Config, DEFAULT_RTMP_URL
+from ndi_rmtp.config import (
+    AuthConfig,
+    Config,
+    Credentials,
+    DEFAULT_RTMP_URL,
+    StreamConfig,
+    Ward,
+    WardCredentials,
+    credentials_path_for,
+)
 
 
 def test_bootstrap_creates_file_with_random_password(tmp_path):
@@ -125,3 +134,107 @@ def test_bootstrap_creates_parent_directories(tmp_path):
     path = tmp_path / "deep" / "nested" / "config.toml"
     Config.bootstrap(path)
     assert path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Device-local credentials overlay
+#
+# Keys live in credentials.toml, NOT config.toml, because install.sh overwrites
+# config.toml on every south/north deploy. The load/save asymmetry below is the
+# load-bearing part: overlaid secrets must never travel back into config.toml.
+# ---------------------------------------------------------------------------
+
+def _base_config(tmp_path: Path) -> Path:
+    cfg = Config(
+        auth=AuthConfig(username="admin", password="pw"),
+        stream=StreamConfig(
+            wards=[
+                Ward(name="Alpha", key="PLACEHOLDER", channel_id=""),
+                Ward(name="Beta", key="", channel_id=""),
+            ],
+            active_ward="Alpha",
+        ),
+    )
+    path = tmp_path / "config.toml"
+    cfg.save(path)
+    return path
+
+
+def test_credentials_overlay_wins_over_config_file(tmp_path):
+    path = _base_config(tmp_path)
+    creds = Credentials()
+    creds.set_ward("Alpha", key="real-key-1234", channel_id="UCbLlSmx8Wvg85m8jPgruTuQ")
+    creds.save(credentials_path_for(path))
+
+    loaded = Config.load(path)
+    alpha = loaded.stream.find_ward("Alpha")
+    assert alpha.key == "real-key-1234"
+    assert alpha.channel_id == "UCbLlSmx8Wvg85m8jPgruTuQ"
+
+
+def test_saving_does_not_leak_overlaid_secrets_into_config_toml(tmp_path):
+    """The regression that would quietly publish stream keys: the UI saves
+    config on nearly every request (quality, active_ward, last_source)."""
+    path = _base_config(tmp_path)
+    creds = Credentials()
+    creds.set_ward("Alpha", key="real-key-1234")
+    creds.save(credentials_path_for(path))
+
+    loaded = Config.load(path)
+    assert loaded.stream.find_ward("Alpha").key == "real-key-1234"  # overlaid in memory
+    loaded.stream.quality = "medium"
+    loaded.save(path)
+
+    raw = path.read_text()
+    assert "real-key-1234" not in raw
+    assert "PLACEHOLDER" in raw          # original file value preserved
+    assert 'quality = "medium"' in raw   # the actual edit still persisted
+
+
+def test_missing_credentials_file_is_fine(tmp_path):
+    path = _base_config(tmp_path)
+    loaded = Config.load(path)
+    assert loaded.stream.find_ward("Alpha").key == "PLACEHOLDER"
+
+
+def test_corrupt_credentials_file_does_not_break_boot(tmp_path):
+    path = _base_config(tmp_path)
+    credentials_path_for(path).write_text("this is not valid toml {{{")
+    loaded = Config.load(path)
+    assert [w.name for w in loaded.stream.wards] == ["Alpha", "Beta"]
+
+
+def test_credentials_for_unknown_ward_are_ignored_but_kept(tmp_path):
+    path = _base_config(tmp_path)
+    creds = Credentials()
+    creds.set_ward("Alpha", key="k")
+    creds.set_ward("Renamed Away", key="still-here")
+    creds.save(credentials_path_for(path))
+
+    Config.load(path)  # must not raise on the unknown name
+    again = Credentials.load(credentials_path_for(path))
+    assert again.for_ward("Renamed Away").key == "still-here"
+
+
+def test_empty_string_clears_but_none_leaves_alone(tmp_path):
+    creds = Credentials()
+    creds.set_ward("Alpha", key="k", channel_id="UCbLlSmx8Wvg85m8jPgruTuQ")
+    creds.set_ward("Alpha", key=None)                 # untouched
+    assert creds.for_ward("Alpha").key == "k"
+    creds.set_ward("Alpha", key="")                   # explicit clear
+    assert creds.for_ward("Alpha").key == ""
+    assert creds.for_ward("Alpha").channel_id == "UCbLlSmx8Wvg85m8jPgruTuQ"
+
+
+def test_credentials_file_is_written_0600(tmp_path):
+    path = tmp_path / "credentials.toml"
+    Credentials(wards={"Alpha": WardCredentials(key="secret")}).save(path)
+    assert oct(path.stat().st_mode)[-3:] == "600"
+
+
+def test_credentials_path_follows_a_symlinked_config(tmp_path):
+    real = tmp_path / "config.south.toml"
+    real.write_text("")
+    link = tmp_path / "config.toml"
+    link.symlink_to(real)
+    assert credentials_path_for(link) == tmp_path / "credentials.toml"

@@ -10,10 +10,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from . import youtube
 from .auth import make_auth_dependency
-from .config import Config
+from .config import Config, Credentials, credentials_path_for
 from .ndi import NDIDiscovery
 from .streamer import Streamer
+from .youtube import LivenessChecker
 
 # PtzController depends on cyndilib (an optional dependency). Only import for
 # type hints when available; the runtime treats `ptz` as an opaque object.
@@ -27,6 +29,14 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 
 _CPU_TEMP_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
+
+# Where we send an operator to create today's broadcast. Loading the Live
+# Control Room is what mints it — YouTube will accept RTMP into a channel with
+# no broadcast forever and never publish it, so this link is the fix, not a
+# convenience. With no channel_id we can still send them to Studio, which lands
+# on whichever account they are signed into (Create → Go Live from there).
+YOUTUBE_CONTROL_ROOM_URL = "https://studio.youtube.com/channel/{channel_id}/livestreaming/dashboard"
+YOUTUBE_STUDIO_URL = "https://studio.youtube.com/"
 
 
 def _read_cpu_temp_c() -> Optional[float]:
@@ -42,6 +52,19 @@ def _read_cpu_temp_c() -> Optional[float]:
         return None
 
 
+def _mask_key(key: str) -> str:
+    """Show only enough of a stream key to tell two apart.
+
+    Never send the full value to a browser: the page is reachable by anyone on
+    the LAN when Basic auth is off, and an operator never needs to read a key
+    back — they copy it from YouTube Studio and paste it in.
+    """
+    key = (key or "").strip()
+    if not key or key.startswith("REPLACE_WITH"):
+        return ""
+    return f"…{key[-4:]}" if len(key) > 4 else "…"
+
+
 def _clamp_speed(v: float) -> float:
     """Clamp PTZ speed values into NDI's expected [-1.0, 1.0] range."""
     return max(-1.0, min(1.0, float(v)))
@@ -55,6 +78,7 @@ def build_app(
 ) -> FastAPI:
     app = FastAPI(title="ndi-rmtp")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    liveness = LivenessChecker()
 
     # Config is reloaded on every request so disk edits are picked up.
     def get_config() -> Config:
@@ -83,12 +107,22 @@ def build_app(
     @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
     def index(request: Request):
         cfg = get_config()
+        ward = cfg.stream.active()
+        channel_id = ward.channel_id if ward else ""
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "config": cfg,
                 "qualities": ["low", "medium", "high"],
+                # Rendered server-side so the link works on first paint,
+                # before /api/youtube has answered (or if it never does).
+                "youtube_url": (
+                    YOUTUBE_CONTROL_ROOM_URL.format(channel_id=channel_id)
+                    if youtube.valid_channel_id(channel_id)
+                    else YOUTUBE_STUDIO_URL
+                ),
+                "has_channel_id": youtube.valid_channel_id(channel_id),
             },
         )
 
@@ -103,6 +137,83 @@ def build_app(
             {"config": get_config()},
         )
 
+    @app.get("/setup", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+    def setup(request: Request):
+        """Per-ward stream key + channel ID, for the Stake Technology Specialist.
+
+        Wards themselves are still enumerated in config.toml; this page only
+        edits the two values a human has to copy out of YouTube Studio.
+        """
+        cfg = get_config()
+        creds = Credentials.load(credentials_path_for(config_path))
+        wards = [
+            {
+                "name": w.name,
+                # Never send a key to the browser. The last 4 characters are
+                # enough to tell two keys apart — CONFIG_CHANGELOG.md already
+                # identifies keys that way — and are what an operator can check
+                # against YouTube Studio without the secret leaving the device.
+                "key_hint": _mask_key(w.key),
+                "has_key": bool(w.key) and not w.key.startswith("REPLACE_WITH"),
+                "key_is_local": bool(creds.for_ward(w.name).key),
+                "channel_id": w.channel_id,
+            }
+            for w in cfg.stream.wards
+        ]
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {
+                "config": cfg,
+                "wards": wards,
+                "credentials_path": str(credentials_path_for(config_path)),
+                # Anyone on the LAN can reach this page when Basic auth is off.
+                # Keys are write-only so nothing leaks, but a stranger could
+                # still overwrite them, which takes a ward off the air.
+                "auth_disabled": not cfg.auth.enabled,
+            },
+        )
+
+    @app.post("/api/ward-credentials", dependencies=[Depends(require_auth)])
+    def api_ward_credentials(
+        ward: str = Form(...),
+        key: str = Form(""),
+        channel_id: str = Form(""),
+    ):
+        cfg = get_config()
+        if cfg.stream.find_ward(ward) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No ward named {ward!r} on this appliance. Wards are listed in config.toml.",
+            )
+        channel_id = channel_id.strip()
+        if channel_id and not youtube.valid_channel_id(channel_id):
+            raise HTTPException(
+                status_code=400,
+                detail="That doesn't look like a channel ID. It starts with "
+                       "'UC' and is 24 characters — copy it from the Studio address bar.",
+            )
+
+        creds_path = credentials_path_for(config_path)
+        creds = Credentials.load(creds_path)
+        # A blank key means "leave it alone", not "erase it" — the form never
+        # shows the current key, so an untouched field must not wipe it. Erasing
+        # is a separate, explicit action (send key="-").
+        new_key = None
+        if key == "-":
+            new_key = ""
+        elif key.strip():
+            new_key = key.strip()
+        creds.set_ward(ward, key=new_key, channel_id=channel_id)
+        creds.save(creds_path)
+        logger.info(
+            "updated credentials for ward %r (key %s, channel_id %s)",
+            ward,
+            "changed" if new_key is not None else "unchanged",
+            "set" if channel_id else "cleared",
+        )
+        return {"ok": True, "ward": ward}
+
     @app.get("/api/status", dependencies=[Depends(require_auth)])
     def api_status():
         data = streamer.status().to_dict()
@@ -113,6 +224,32 @@ def build_app(
     async def api_sources():
         sources = await discovery.list()
         return [{"name": s.name, "address": s.address} for s in sources]
+
+    @app.get("/api/youtube", dependencies=[Depends(require_auth)])
+    async def api_youtube():
+        """Best-effort liveness for the active ward's channel.
+
+        Returns a claim ("live"/"scheduled") or an admission of ignorance
+        ("not_visible"/"unavailable"/"unconfigured"). The UI must never turn
+        the latter into a warning — see youtube.py for why a negative
+        observation is uninformative here.
+
+        Always 200, even when the check fails: this is decoration on a page
+        whose real job is streaming, and a YouTube outage must not surface as
+        an error banner over a working stream.
+        """
+        cfg = get_config()
+        ward = cfg.stream.active()
+        channel_id = ward.channel_id if ward else ""
+        result = await liveness.check(channel_id)
+        data = result.to_dict()
+        data["channel_id"] = channel_id
+        data["control_room_url"] = (
+            YOUTUBE_CONTROL_ROOM_URL.format(channel_id=channel_id)
+            if youtube.valid_channel_id(channel_id)
+            else YOUTUBE_STUDIO_URL
+        )
+        return data
 
     @app.post("/api/start", dependencies=[Depends(require_auth)])
     async def api_start(

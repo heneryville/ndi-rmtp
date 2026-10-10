@@ -94,6 +94,20 @@ class AdvancedConfig:
     status_poll_ms: int = 2000
 
 
+PRIVACY_CHOICES = ("public", "unlisted", "private")
+
+
+@dataclass
+class YoutubeConfig:
+    """OAuth client for the YouTube integration; empty client_id hides the feature."""
+    client_id: str = ""
+    client_secret: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.client_id.strip())
+
+
 def credentials_path_for(config_path: Path) -> Path:
     """Where the device-local credentials file sits for a given config path.
 
@@ -109,6 +123,27 @@ def credentials_path_for(config_path: Path) -> Path:
 class WardCredentials:
     key: str = ""
     channel_id: str = ""
+    privacy: str = "public"
+    # Presence of a refresh token == ward is connected to YouTube.
+    yt_refresh_token: str = ""
+    yt_channel_title: str = ""
+    yt_stream_id: str = ""
+    yt_stream_key: str = ""
+    yt_needs_reconnect: bool = False
+    yt_keep: list[str] = field(default_factory=list)
+
+    @property
+    def yt_connected(self) -> bool:
+        return bool(self.yt_refresh_token)
+
+    @property
+    def yt_linked(self) -> bool:
+        return self.yt_connected or self.yt_needs_reconnect
+
+    @classmethod
+    def from_dict(cls, entry: dict) -> "WardCredentials":
+        known = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in entry.items() if k in known})
 
 
 @dataclass
@@ -135,10 +170,7 @@ class Credentials:
             # lets someone retype the keys.
             return cls()
         wards = {
-            name: WardCredentials(
-                key=str(entry.get("key", "")),
-                channel_id=str(entry.get("channel_id", "")),
-            )
+            name: WardCredentials.from_dict(entry)
             for name, entry in (data.get("wards") or {}).items()
             if isinstance(entry, dict)
         }
@@ -170,12 +202,23 @@ class Credentials:
             entry.channel_id = channel_id.strip()
 
 
+def update_ward_credentials(path: Path, ward: str, **changes) -> WardCredentials:
+    """Load, change one ward's fields, save. Synchronous so no await can interleave."""
+    creds = Credentials.load(path)
+    entry = creds.wards.setdefault(ward, WardCredentials())
+    for name, value in changes.items():
+        setattr(entry, name, value)
+    creds.save(path)
+    return entry
+
+
 @dataclass
 class Config:
     auth: AuthConfig
     stream: StreamConfig = field(default_factory=StreamConfig)
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     ptz: PtzConfig = field(default_factory=PtzConfig)
+    youtube: YoutubeConfig = field(default_factory=YoutubeConfig)
     # A hand-incremented "config generation" stamp, bumped on every deploy (see
     # deploy.md) and shown in the UI so an operator can tell at a glance whether
     # the appliance actually picked up the latest deployed config. Defaults to 0
@@ -201,6 +244,7 @@ class Config:
             stream=StreamConfig(**stream_data),
             advanced=AdvancedConfig(**data.get("advanced", {})),
             ptz=PtzConfig(**ptz_data),
+            youtube=YoutubeConfig(**data.get("youtube", {})),
             config_version=data.get("config_version", 0),
         )
         config._file_credentials = {

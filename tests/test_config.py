@@ -11,7 +11,9 @@ from ndi_rmtp.config import (
     StreamConfig,
     Ward,
     WardCredentials,
+    YoutubeConfig,
     credentials_path_for,
+    update_ward_credentials,
 )
 
 
@@ -238,3 +240,63 @@ def test_credentials_path_follows_a_symlinked_config(tmp_path):
     link = tmp_path / "config.toml"
     link.symlink_to(real)
     assert credentials_path_for(link) == tmp_path / "credentials.toml"
+
+
+def test_youtube_section_round_trips_and_defaults_off(tmp_path):
+    path = tmp_path / "config.toml"
+    cfg = Config(auth=AuthConfig(username="a", password="b"))
+    assert cfg.youtube.enabled is False
+    cfg.youtube = YoutubeConfig(client_id="cid.apps.googleusercontent.com", client_secret="s")
+    cfg.save(path)
+    loaded = Config.load(path)
+    assert loaded.youtube.client_id == "cid.apps.googleusercontent.com"
+    assert loaded.youtube.enabled is True
+
+
+def test_old_config_without_youtube_section_loads(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[auth]\nusername = "a"\npassword = "b"\n')
+    assert Config.load(path).youtube.enabled is False
+
+
+def test_ward_youtube_fields_round_trip(tmp_path):
+    path = tmp_path / "credentials.toml"
+    creds = Credentials()
+    creds.wards["W"] = WardCredentials(
+        privacy="unlisted", yt_refresh_token="rt", yt_stream_id="sid",
+        yt_stream_key="skey", yt_keep=["vid1"],
+    )
+    creds.save(path)
+    w = Credentials.load(path).for_ward("W")
+    assert (w.privacy, w.yt_refresh_token, w.yt_stream_key, w.yt_keep) == ("unlisted", "rt", "skey", ["vid1"])
+    assert w.yt_connected and w.yt_linked
+
+
+def test_needs_reconnect_is_linked_but_not_connected():
+    w = WardCredentials(yt_needs_reconnect=True)
+    assert w.yt_linked and not w.yt_connected
+
+
+def test_credentials_load_ignores_unknown_fields(tmp_path):
+    path = tmp_path / "credentials.toml"
+    path.write_text('[wards.W]\nkey = "k"\nfuture_field = 1\n')
+    assert Credentials.load(path).for_ward("W").key == "k"
+
+
+def test_update_ward_credentials_persists(tmp_path):
+    path = tmp_path / "credentials.toml"
+    update_ward_credentials(path, "W", yt_stream_key="abc", privacy="private")
+    w = Credentials.load(path).for_ward("W")
+    assert (w.yt_stream_key, w.privacy) == ("abc", "private")
+
+
+def test_config_save_never_writes_youtube_ward_fields(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    Config(
+        auth=AuthConfig(username="a", password="b"),
+        stream=StreamConfig(wards=[Ward(name="W", key="")]),
+    ).save(cfg_path)
+    update_ward_credentials(credentials_path_for(cfg_path), "W", yt_refresh_token="SECRET-RT", yt_stream_key="SECRET-SK")
+    Config.load(cfg_path).save(cfg_path)
+    text = cfg_path.read_text()
+    assert "SECRET" not in text and "yt_" not in text

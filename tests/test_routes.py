@@ -630,3 +630,58 @@ def test_api_youtube_uses_api_status_for_linked_ward(tmp_path, config, streamer,
 def test_api_youtube_scrape_mode_for_unlinked_ward(tmp_path, config, streamer, discovery, yt):
     c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
     assert c.get("/api/youtube", headers=AUTH).json()["mode"] == "scrape"
+
+
+from ndi_rmtp.youtube_auth import FlowState
+
+
+def test_setup_hides_youtube_when_disabled(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, enabled=False, linked=False)
+    assert "Connect YouTube" not in c.get("/setup", headers=AUTH).text
+    assert c.post("/api/youtube/connect", data={"ward": "Primary"}, headers=AUTH).status_code == 404
+
+
+def test_setup_shows_connect_for_unlinked_ward(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    assert "Connect YouTube" in c.get("/setup", headers=AUTH).text
+
+
+def test_setup_shows_connected_channel_and_never_tokens(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, yt_channel_title="Ward Channel",
+                   yt_refresh_token="RT-SENTINEL-9f3")
+    html = c.get("/setup", headers=AUTH).text
+    assert "Ward Channel" in html and "Disconnect" in html
+    assert "RT-SENTINEL-9f3" not in html and "api-key" not in html
+
+
+def test_connect_begins_device_flow(tmp_path, config, streamer, discovery, yt):
+    yt.flows.begin = AsyncMock(return_value=FlowState("pending", "ABCD-EFGH", "https://www.google.com/device", 1800))
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    r = c.post("/api/youtube/connect", data={"ward": "Primary"}, headers=AUTH)
+    assert r.json()["user_code"] == "ABCD-EFGH"
+    yt.flows.begin.assert_awaited_once_with("Primary")
+
+
+def test_connect_status_none_before_begin(tmp_path, config, streamer, discovery, yt):
+    yt.flows.state = MagicMock(return_value=None)
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    assert c.get("/api/youtube/connect", params={"ward": "Primary"}, headers=AUTH).json() == {"state": "none"}
+
+
+def test_connect_rejects_unknown_ward(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    assert c.post("/api/youtube/connect", data={"ward": "Nope"}, headers=AUTH).status_code == 400
+
+
+def test_disconnect_calls_manager(tmp_path, config, streamer, discovery, yt):
+    yt.manager.disconnect = AsyncMock()
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    assert c.post("/api/youtube/disconnect", data={"ward": "Primary"}, headers=AUTH).status_code == 200
+    yt.manager.disconnect.assert_awaited_once_with("Primary")
+
+
+def test_privacy_saves_and_validates(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    assert c.post("/api/youtube/privacy", data={"ward": "Primary", "privacy": "unlisted"}, headers=AUTH).status_code == 200
+    assert Credentials.load(credentials_path_for(tmp_path / "config.toml")).for_ward("Primary").privacy == "unlisted"
+    assert c.post("/api/youtube/privacy", data={"ward": "Primary", "privacy": "secret"}, headers=AUTH).status_code == 400

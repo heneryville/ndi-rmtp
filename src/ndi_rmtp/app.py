@@ -15,10 +15,11 @@ from fastapi.templating import Jinja2Templates
 from . import youtube
 from .broadcasts import PrepareError, YouTubeServices
 from .auth import make_auth_dependency
-from .config import Config, Credentials, credentials_path_for
+from .config import PRIVACY_CHOICES, Config, Credentials, credentials_path_for, update_ward_credentials
 from .ndi import NDIDiscovery
 from .streamer import Streamer
 from .youtube import LivenessChecker
+from .youtube_auth import AuthError
 
 # PtzController depends on cyndilib (an optional dependency). Only import for
 # type hints when available; the runtime treats `ptz` as an opaque object.
@@ -66,6 +67,16 @@ def _mask_key(key: str) -> str:
     if not key or key.startswith("REPLACE_WITH"):
         return ""
     return f"…{key[-4:]}" if len(key) > 4 else "…"
+
+
+def _yt_setup_fields(wc) -> dict:
+    """What /setup may show about a ward's YouTube link; never tokens or keys."""
+    return {
+        "yt_connected": wc.yt_connected,
+        "yt_needs_reconnect": wc.yt_needs_reconnect,
+        "yt_channel_title": wc.yt_channel_title,
+        "privacy": wc.privacy,
+    }
 
 
 def _clamp_speed(v: float) -> float:
@@ -166,6 +177,7 @@ def build_app(
         creds = Credentials.load(credentials_path_for(config_path))
         wards = [
             {
+                **_yt_setup_fields(creds.for_ward(w.name)),
                 "name": w.name,
                 # Never send a key to the browser. The last 4 characters are
                 # enough to tell two keys apart — CONFIG_CHANGELOG.md already
@@ -189,6 +201,8 @@ def build_app(
                 # Keys are write-only so nothing leaks, but a stranger could
                 # still overwrite them, which takes a ward off the air.
                 "auth_disabled": not cfg.auth.enabled,
+                "youtube_enabled": youtube_services is not None and cfg.youtube.enabled,
+                "privacy_choices": PRIVACY_CHOICES,
             },
         )
 
@@ -231,6 +245,42 @@ def build_app(
             "set" if channel_id else "cleared",
         )
         return {"ok": True, "ward": ward}
+
+    def _require_youtube_ward(ward: str) -> Config:
+        cfg = get_config()
+        if youtube_services is None or not cfg.youtube.enabled:
+            raise HTTPException(status_code=404, detail="YouTube integration isn't configured on this appliance.")
+        if cfg.stream.find_ward(ward) is None:
+            raise HTTPException(status_code=400, detail=f"No ward named {ward!r} on this appliance.")
+        return cfg
+
+    @app.post("/api/youtube/connect", dependencies=[Depends(require_auth)])
+    async def api_youtube_connect(ward: str = Form(...)):
+        _require_youtube_ward(ward)
+        try:
+            return (await youtube_services.flows.begin(ward)).to_dict()
+        except AuthError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @app.get("/api/youtube/connect", dependencies=[Depends(require_auth)])
+    def api_youtube_connect_status(ward: str):
+        _require_youtube_ward(ward)
+        st = youtube_services.flows.state(ward)
+        return st.to_dict() if st else {"state": "none"}
+
+    @app.post("/api/youtube/disconnect", dependencies=[Depends(require_auth)])
+    async def api_youtube_disconnect(ward: str = Form(...)):
+        _require_youtube_ward(ward)
+        await youtube_services.manager.disconnect(ward)
+        return {"ok": True}
+
+    @app.post("/api/youtube/privacy", dependencies=[Depends(require_auth)])
+    def api_youtube_privacy(ward: str = Form(...), privacy: str = Form(...)):
+        _require_youtube_ward(ward)
+        if privacy not in PRIVACY_CHOICES:
+            raise HTTPException(status_code=400, detail=f"Privacy must be one of {', '.join(PRIVACY_CHOICES)}.")
+        update_ward_credentials(credentials_path_for(config_path), ward, privacy=privacy)
+        return {"ok": True}
 
     @app.get("/api/status", dependencies=[Depends(require_auth)])
     def api_status():

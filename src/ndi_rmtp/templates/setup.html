@@ -50,12 +50,41 @@
     {% for w in wards %}
     <section class="card ward-card">
       <h2>{{ w.name }}</h2>
+      {% if youtube_enabled %}
+      <div class="yt-connect" data-ward="{{ w.name }}">
+        {% if w.yt_connected %}
+        <p class="yt-connected">Connected to YouTube as <strong>{{ w.yt_channel_title }}</strong>.
+          Start creates and ends this ward's broadcast automatically.</p>
+        <label>Broadcast privacy
+          <select class="yt-privacy">
+            {% for p in privacy_choices %}
+            <option value="{{ p }}" {% if p == w.privacy %}selected{% endif %}>{{ p|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="button" class="btn-secondary yt-disconnect">Disconnect YouTube</button>
+        {% else %}
+        {% if w.yt_needs_reconnect %}
+        <p class="err">YouTube sign-in for this ward stopped working. Reconnect to keep automatic broadcasts.</p>
+        {% endif %}
+        <button type="button" class="btn-primary yt-connect-btn">{% if w.yt_needs_reconnect %}Reconnect YouTube{% else %}Connect YouTube{% endif %}</button>
+        <div class="yt-code" hidden>
+          <p>On a phone or computer, go to <a class="yt-code-url" target="_blank" rel="noopener"></a>
+            and enter <strong class="yt-code-value"></strong></p>
+          <p class="hint">Sign in as this ward's YouTube account and pick its channel. If Google
+            warns the app isn't verified, choose Advanced → Continue.
+            <span class="yt-code-countdown"></span></p>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
       <form class="ward-form"
             hx-post="/api/ward-credentials"
             hx-swap="none"
             data-ward="{{ w.name }}">
         <input type="hidden" name="ward" value="{{ w.name }}">
 
+        {% if not (youtube_enabled and w.yt_connected) %}
         <label>Stream key
           <input type="password" name="key" autocomplete="off" spellcheck="false"
                  placeholder="{% if w.has_key %}Saved — leave blank to keep it{% else %}Paste the key from YouTube Studio{% endif %}">
@@ -68,6 +97,9 @@
             {% endif %}
           </small>
         </label>
+        {% else %}
+        <p class="hint">The stream key is managed by YouTube while connected. Disconnect to use a pasted key.</p>
+        {% endif %}
 
         <label>YouTube channel ID <span class="optional">optional</span>
           <input type="text" name="channel_id" value="{{ w.channel_id }}"
@@ -132,6 +164,49 @@
         badge.hidden = false;
         setTimeout(() => { badge.hidden = true; }, 3000);
       }
+    });
+
+    // ---- YouTube connect (device flow) ---------------------------------
+    async function postForm(url, fields) {
+      const r = await fetch(url, { method: "POST", body: new URLSearchParams(fields) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+      return data;
+    }
+    document.querySelectorAll(".yt-connect").forEach((box) => {
+      const ward = box.dataset.ward;
+      const btn = box.querySelector(".yt-connect-btn");
+      const code = box.querySelector(".yt-code");
+      btn?.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          let st = await postForm("/api/youtube/connect", { ward });
+          code.hidden = false;
+          box.querySelector(".yt-code-value").textContent = st.user_code;
+          const a = box.querySelector(".yt-code-url");
+          a.href = st.verification_url; a.textContent = st.verification_url.replace(/^https?:\/\//, "");
+          while (st.state === "pending") {
+            box.querySelector(".yt-code-countdown").textContent =
+              `Code expires in ${Math.ceil(st.expires_in_s / 60)} min.`;
+            await new Promise(r => setTimeout(r, 3000));
+            st = await fetch(`/api/youtube/connect?ward=${encodeURIComponent(ward)}`).then(r => r.json());
+          }
+          if (st.state === "connected") { location.reload(); return; }
+          showFlash(st.message || "Sign-in didn't finish. Try again.");
+        } catch (e) {
+          showFlash(e.message);
+        }
+        code.hidden = true;
+        btn.disabled = false;
+      });
+      box.querySelector(".yt-disconnect")?.addEventListener("click", async () => {
+        try { await postForm("/api/youtube/disconnect", { ward }); location.reload(); }
+        catch (e) { showFlash(e.message); }
+      });
+      box.querySelector(".yt-privacy")?.addEventListener("change", async (evt) => {
+        try { await postForm("/api/youtube/privacy", { ward, privacy: evt.target.value }); }
+        catch (e) { showFlash(e.message); }
+      });
     });
   </script>
 </body>

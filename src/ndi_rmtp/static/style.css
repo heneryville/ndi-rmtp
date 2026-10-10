@@ -583,3 +583,7 @@ body.setup-page { padding-bottom: 1.5rem; }
 .footer-sep { color: #4b5563; margin: 0 0.35rem; }
 .footer-link { color: #6b7280; text-decoration: underline; }
 .footer-link:hover { color: var(--muted); }
+
+/* YouTube connect on /setup */
+.yt-connect { display: grid; gap: .5rem; margin-bottom: 1rem; }
+.yt-code-value { font-size: 1.4rem; letter-spacing: .1em; }

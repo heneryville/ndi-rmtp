@@ -18,6 +18,9 @@ from .youtube_auth import AuthError, DeviceFlows, ReauthRequired, TokenStore
 logger = logging.getLogger(__name__)
 
 REUSE_WINDOW = timedelta(hours=12)
+RETENTION = timedelta(days=7)
+SWEEP_FIRST_DELAY_S = 120
+SWEEP_INTERVAL_S = 6 * 3600
 STATUS_CACHE_S = 5.0
 TITLE_MAX = 100
 STREAM_TITLE = "ndi-rmtp appliance"
@@ -62,6 +65,7 @@ class BroadcastManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self._active: dict[str, str] = {}
         self._status_cache: dict[str, tuple[float, dict]] = {}
+        self.last_sweep: dict = {"at": None, "error": None}
 
     def _ward(self, ward: str):
         return Credentials.load(self._path).for_ward(ward)
@@ -166,6 +170,76 @@ class BroadcastManager:
                 logger.info("status check for %r failed: %s", ward, e)
         self._status_cache[ward] = (self._clock(), data)
         return data
+
+    def _expired(self, b: Broadcast) -> bool:
+        if b.life_cycle_status == "complete":
+            return b.actual_end is not None and self._now() - b.actual_end > RETENTION
+        # Created but never went live: age it from its scheduled start.
+        return b.life_cycle_status in ("ready", "created") and b.scheduled_start is not None \
+            and self._now() - b.scheduled_start > RETENTION
+
+    async def sweep(self) -> list[str]:
+        creds = Credentials.load(self._path)
+        # Wards sharing a channel see the same broadcasts, so a keep from any ward protects it.
+        kept = {vid for w in creds.wards.values() for vid in w.yt_keep}
+        deleted, errors = [], []
+        for name, w in creds.wards.items():
+            if not w.yt_connected:
+                continue
+            try:
+                for status in ("completed", "upcoming"):
+                    for b in await self._client.list_broadcasts(name, status):
+                        if b.is_ours and b.id not in kept and b.id not in deleted and self._expired(b):
+                            await self._client.delete_video(name, b.id)
+                            logger.info("retention: deleted %s %r for ward %r", b.id, b.title, name)
+                            deleted.append(b.id)
+            except (YouTubeError, httpx.HTTPError, ReauthRequired, AuthError) as e:
+                logger.warning("retention sweep failed for %r: %s", name, e)
+                errors.append(f"{name}: {e}")
+        self.last_sweep = {"at": self._now().isoformat(timespec="seconds"),
+                           "error": "; ".join(errors) or None}
+        return deleted
+
+    async def run_sweeper(self, sleep=asyncio.sleep) -> None:
+        await sleep(SWEEP_FIRST_DELAY_S)
+        while True:
+            try:
+                await self.sweep()
+            except Exception:
+                logger.exception("retention sweep crashed")
+            await sleep(SWEEP_INTERVAL_S)
+
+    async def past_streams(self, ward: str) -> list[dict]:
+        w = self._ward(ward)
+        rows = []
+        for status in ("completed", "upcoming"):
+            for b in await self._client.list_broadcasts(ward, status):
+                if not b.is_ours:
+                    continue
+                basis = b.actual_end or b.scheduled_start
+                rows.append({
+                    "id": b.id, "title": b.title, "privacy": b.privacy, "status": b.life_cycle_status,
+                    "ended_at": b.actual_end.isoformat() if b.actual_end else None,
+                    "delete_on": (basis + RETENTION).date().isoformat() if basis else None,
+                    "kept": b.id in w.yt_keep, "watch_url": b.watch_url,
+                })
+        rows.sort(key=lambda r: r["ended_at"] or "9999", reverse=True)
+        return rows
+
+    def set_keep(self, ward: str, video_id: str, keep: bool) -> None:
+        current = [v for v in self._ward(ward).yt_keep if v != video_id]
+        update_ward_credentials(self._path, ward, yt_keep=current + [video_id] if keep else current)
+
+    async def delete_now(self, ward: str, video_id: str) -> None:
+        b = await self._client.get_broadcast(ward, video_id)
+        # Only ever delete what this appliance created, and never a broadcast people are watching.
+        if b is None or not b.is_ours:
+            raise PrepareError("That video wasn't created by this appliance, so it won't be deleted from here.")
+        if b.life_cycle_status in ("live", "liveStarting", "testing", "testStarting"):
+            raise PrepareError("That broadcast is live right now. Stop it before deleting.")
+        await self._client.delete_video(ward, video_id)
+        self.set_keep(ward, video_id, False)
+        logger.info("deleted %s %r for ward %r on request", video_id, b.title, ward)
 
 
 @dataclass

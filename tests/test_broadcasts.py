@@ -204,3 +204,93 @@ async def test_disconnect_revokes_and_forgets_record(setup):
     await mgr.prepare("W")
     await mgr.disconnect("W")
     assert mgr._tokens.revoked == ["W"] and "W" not in mgr._active
+
+
+OLD_END = NOW - timedelta(days=8)
+NEW_END = NOW - timedelta(days=2)
+
+
+async def test_sweep_deletes_only_ours_older_than_seven_days(setup):
+    mgr, client, _ = setup
+    client.lists["completed"] = [
+        bc("old", status="complete", end=OLD_END),
+        bc("recent", status="complete", end=NEW_END),
+        bc("obs", status="complete", end=OLD_END, ours=False),
+    ]
+    assert await mgr.sweep() == ["old"]
+    assert client.deleted == ["old"]
+    assert mgr.last_sweep["error"] is None and mgr.last_sweep["at"]
+
+
+async def test_sweep_deletes_stale_upcoming_never_live(setup):
+    mgr, client, _ = setup
+    client.lists["upcoming"] = [bc("never", start=NOW - timedelta(days=8)), bc("fresh", start=NOW)]
+    await mgr.sweep()
+    assert client.deleted == ["never"]
+
+
+async def test_sweep_respects_keep_from_any_ward(setup):
+    mgr, client, path = setup
+    update_ward_credentials(path, "Other", yt_keep=["old"])  # shared channel, kept by the other ward
+    client.lists["completed"] = [bc("old", status="complete", end=OLD_END)]
+    await mgr.sweep()
+    assert client.deleted == []
+
+
+async def test_sweep_skips_unconnected_wards(setup):
+    mgr, client, path = setup
+    update_ward_credentials(path, "W", yt_refresh_token="")
+    client.lists["completed"] = [bc("old", status="complete", end=OLD_END)]
+    await mgr.sweep()
+    assert client.deleted == []
+
+
+async def test_sweep_one_ward_failing_does_not_stop_others(tmp_path):
+    path = tmp_path / "credentials.toml"
+    for w in ("A", "B"):
+        update_ward_credentials(path, w, yt_refresh_token="rt", yt_stream_id="s1")
+
+    class Split(FakeClient):
+        async def list_broadcasts(self, ward, status, max_pages=10):
+            if ward == "A":
+                raise YouTubeError("backendError", 500)
+            return [bc("old", status="complete", end=OLD_END)] if status == "completed" else []
+
+    client = Split()
+    mgr = BroadcastManager(client, FakeTokens(), path, now=lambda: NOW)
+    assert await mgr.sweep() == ["old"]
+    assert "A" in mgr.last_sweep["error"]
+
+
+async def test_past_streams_lists_ours_with_delete_date(setup):
+    mgr, client, path = setup
+    client.lists["completed"] = [bc("old", status="complete", end=OLD_END), bc("obs", status="complete", end=OLD_END, ours=False)]
+    update_ward_credentials(path, "W", yt_keep=["old"])
+    rows = await mgr.past_streams("W")
+    assert [r["id"] for r in rows] == ["old"]
+    assert rows[0]["kept"] is True and rows[0]["delete_on"] == (OLD_END + timedelta(days=7)).date().isoformat()
+
+
+async def test_set_keep_toggles(setup):
+    mgr, _, path = setup
+    mgr.set_keep("W", "v1", True); mgr.set_keep("W", "v1", True)
+    assert Credentials.load(path).for_ward("W").yt_keep == ["v1"]
+    mgr.set_keep("W", "v1", False)
+    assert Credentials.load(path).for_ward("W").yt_keep == []
+
+
+async def test_delete_now_refuses_unmarked_video(setup):
+    mgr, client, _ = setup
+    client.broadcasts["obs"] = bc("obs", ours=False, status="complete")
+    with pytest.raises(PrepareError):
+        await mgr.delete_now("W", "obs")
+    client.broadcasts["ours"] = bc("ours", status="complete")
+    await mgr.delete_now("W", "ours")
+    assert client.deleted == ["ours"]
+
+
+async def test_delete_now_refuses_live_broadcast(setup):
+    mgr, client, _ = setup
+    client.broadcasts["live1"] = bc("live1", status="live")
+    with pytest.raises(PrepareError):
+        await mgr.delete_now("W", "live1")

@@ -2,10 +2,14 @@
 
 Do this once for the stake. Both appliances share the same OAuth client.
 
-1. Go to console.cloud.google.com and create a project (e.g. "Stake Streaming").
+1. Go to console.cloud.google.com and create a project (e.g. "Snow Springs Stake Streaming").
 2. APIs & Services → Library → enable **YouTube Data API v3**.
-3. APIs & Services → OAuth consent screen: User type **External**. Fill in the app
-   name and support email. Scopes: add `https://www.googleapis.com/auth/youtube`.
+3. APIs & Services → OAuth consent screen: User type **External**. App name
+   **Snow Springs Stake Streaming**, plus a support email. App domain links:
+   homepage `https://heneryville.github.io/ndi-rmtp/`, privacy policy
+   `https://heneryville.github.io/ndi-rmtp/privacy`, terms
+   `https://heneryville.github.io/ndi-rmtp/terms` (served from the `gh-pages`
+   branch). Scopes: add `https://www.googleapis.com/auth/youtube`.
 4. On the consent screen, click **Publish app** so the status is **In production**.
    Do NOT submit for verification. Leaving it in Testing makes every ward's sign-in
    expire after 7 days.

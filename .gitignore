@@ -35,3 +35,7 @@ uv.lock
 .ui-iter/
 .playwright-mcp/
 .superpowers/
+
+# Appliance SSH credentials and deploy runbook: local only, never committed.
+ssh.md
+deploy.md

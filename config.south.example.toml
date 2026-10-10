@@ -79,3 +79,9 @@ presets = [
 recall_speed = 0.1
 move_speed = 0.2
 default_preset = "Stand Far"
+
+# Optional. OAuth client for the YouTube integration (docs/youtube-oauth-setup.md).
+# Leave client_id empty and the appliance behaves exactly as before: pasted keys only.
+[youtube]
+client_id = ""
+client_secret = ""

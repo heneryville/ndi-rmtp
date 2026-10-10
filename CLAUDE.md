@@ -170,7 +170,35 @@ Keys are **write-only** in the UI: `/setup` renders only the last 4 characters
 returns a full key. The page warns when `[auth] enabled = false`, since anyone
 on the LAN could then overwrite a key and take a ward off the air.
 
+### YouTube integration (OAuth) creates the broadcast before the encoder
+
+Opt-in per ward. A ward signs in once on `/setup` via Google's device flow; its
+refresh token, channel and the appliance's reusable ingest stream key live in
+`credentials.toml` (`yt_*` fields). An empty `[youtube] client_id` hides the
+whole feature and every ward streams from its pasted key as before. Setup:
+`docs/youtube-oauth-setup.md`.
+
+- `/api/start` calls `BroadcastManager.prepare` **before** `streamer.start` —
+  this is the 2026-09-12 "Preparing stream" ordering fix. A prepare failure
+  returns 424 and never spawns; the UI then offers `skip_youtube` (stream to
+  the ingest key, create the broadcast in Studio by hand).
+- Broadcasts use `enableAutoStop=false` so the auto-restart backoff (up to 60 s)
+  can't end one; `finish` runs only on an explicit Stop.
+- A marked, bound broadcast scheduled within 12 h is reused (failed Start,
+  crash, restart). Older `active` ones are completed first, never reused.
+- Retention deletes only broadcasts whose description carries
+  `ndi-rmtp; auto-deletes`, 7 days after `actualEndTime`. A keep from **any**
+  ward protects a video, because wards can share a channel.
+- The Google project must stay **In production (unverified)**. Testing mode
+  expires refresh tokens after 7 days, so every ward would re-sign-in weekly.
+- Code: `youtube_auth.py` (tokens, device flow), `youtube_api.py` (REST),
+  `broadcasts.py` (lifecycle + sweep). None of it awaits under `Streamer._lock`.
+
 ### YouTube liveness only ever reports POSITIVES
+
+This applies to wards **not** connected via OAuth. Connected wards use
+`liveBroadcasts.list`, which sees unlisted broadcasts, so their status may show
+negatives (`yt-api-help` after 120 s streaming without going live).
 
 `youtube.py` checks whether a ward's stream is live by fetching
 `youtube.com/channel/<channel_id>/live` and reading its

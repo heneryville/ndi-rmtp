@@ -166,6 +166,18 @@ When the meeting is over, click the red **■ Stop** button.
 
 That's it. You can close the browser tab.
 
+### Wards connected to YouTube
+
+If your ward has been connected on **Ward setup**, you don't need YouTube Studio at all:
+
+- Press **Start**. The appliance creates today's broadcast, and the page shows
+  **✓ Live on YouTube** with a **Copy link** button once viewers can see it.
+- **Stop** ends the broadcast on YouTube.
+- If Start says YouTube couldn't create the broadcast, press **Start without YouTube
+  setup** and create the broadcast in YouTube Studio the old way.
+- Recordings delete themselves 7 days after the meeting. To keep one, open
+  **Past streams** at the bottom of the page and press **Keep**.
+
 ---
 
 ## 7. What to do if YouTube viewers complain about buffering

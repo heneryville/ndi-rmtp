@@ -1,7 +1,9 @@
 """FastAPI app: routes, dependency injection, template rendering."""
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import youtube
+from .broadcasts import PrepareError, YouTubeServices
 from .auth import make_auth_dependency
 from .config import Config, Credentials, credentials_path_for
 from .ndi import NDIDiscovery
@@ -75,8 +78,16 @@ def build_app(
     streamer: Streamer,
     discovery: NDIDiscovery,
     ptz: Optional["PtzController"] = None,  # noqa: F821 — string-only forward ref
+    youtube_services: Optional[YouTubeServices] = None,
 ) -> FastAPI:
-    app = FastAPI(title="ndi-rmtp")
+    @asynccontextmanager
+    async def lifespan(_app):
+        task = asyncio.create_task(youtube_services.manager.run_sweeper()) if youtube_services else None
+        yield
+        if task:
+            task.cancel()
+
+    app = FastAPI(title="ndi-rmtp", lifespan=lifespan)
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     liveness = LivenessChecker()
 
@@ -85,6 +96,13 @@ def build_app(
         return Config.load(config_path)
 
     require_auth = make_auth_dependency(get_config)
+
+    def _yt_ward(cfg: Config, ward_name: str):
+        """The ward's credentials if it uses the YouTube API path, else None."""
+        if youtube_services is None or not cfg.youtube.enabled:
+            return None
+        w = Credentials.load(credentials_path_for(config_path)).for_ward(ward_name)
+        return w if w.yt_linked else None
 
     # `no-cache` means "revalidate before reusing", NOT "don't cache" — the
     # browser still stores the file and StaticFiles' ETag turns each check into
@@ -240,6 +258,8 @@ def build_app(
         """
         cfg = get_config()
         ward = cfg.stream.active()
+        if ward is not None and _yt_ward(cfg, ward.name) is not None:
+            return await youtube_services.manager.status(ward.name)
         channel_id = ward.channel_id if ward else ""
         result = await liveness.check(channel_id)
         data = result.to_dict()
@@ -249,16 +269,18 @@ def build_app(
             if youtube.valid_channel_id(channel_id)
             else YOUTUBE_STUDIO_URL
         )
+        data["mode"] = "scrape"
         return data
 
     @app.post("/api/start", dependencies=[Depends(require_auth)])
     async def api_start(
         source: str = Form(...),
         quality: str = Form(...),
+        skip_youtube: bool = Form(False),
     ):
         cfg = get_config()
         active = cfg.stream.active()
-        if active is None or not active.key:
+        if active is None:
             raise HTTPException(
                 status_code=400,
                 detail="No ward is selected or the selected ward isn't set up correctly. Please contact your Stake Technology Specialist.",
@@ -280,6 +302,24 @@ def build_app(
                 detail="Camera not found on the network. Make sure it is powered on, then wait a moment and try again.",
             )
 
+        # The broadcast must exist before the encoder connects or YouTube parks it in "Preparing stream".
+        stream_key, watch_url = active.key, None
+        yt_ward = _yt_ward(cfg, active.name)
+        if yt_ward is not None:
+            if skip_youtube:
+                stream_key = yt_ward.yt_stream_key or active.key
+            else:
+                try:
+                    prepared = await youtube_services.manager.prepare(active.name)
+                except PrepareError as e:
+                    raise HTTPException(status_code=424, detail=str(e))
+                stream_key, watch_url = prepared.stream_key, prepared.watch_url
+        if not stream_key or stream_key.startswith("REPLACE_WITH"):
+            raise HTTPException(
+                status_code=400,
+                detail="No ward is selected or the selected ward isn't set up correctly. Please contact your Stake Technology Specialist.",
+            )
+
         # Persist the friendly name so the UI restores the selection across restarts.
         cfg.stream.last_source = source
         cfg.stream.quality = quality
@@ -290,17 +330,21 @@ def build_app(
         try:
             await streamer.start(
                 source=connect_target,
-                stream_key=active.key,
+                stream_key=stream_key,
                 quality=quality,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))
-        return {"ok": True}
+        return {"ok": True, "watch_url": watch_url}
 
     @app.post("/api/stop", dependencies=[Depends(require_auth)])
     async def api_stop():
         await streamer.stop()
-        return {"ok": True}
+        cfg = get_config()
+        warning = None
+        if _yt_ward(cfg, cfg.stream.active_ward) is not None:
+            warning = await youtube_services.manager.finish(cfg.stream.active_ward)
+        return {"ok": True, "warning": warning}
 
     @app.post("/api/mute", dependencies=[Depends(require_auth)])
     async def api_mute(muted: bool = Form(...)):

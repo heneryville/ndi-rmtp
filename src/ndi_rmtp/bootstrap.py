@@ -10,12 +10,16 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 
 from .app import build_app
-from .config import Config
+from .broadcasts import BroadcastManager, YouTubeServices
+from .config import Config, credentials_path_for
 from .ndi import NDIDiscovery
 from .streamer import Streamer
+from .youtube_api import YouTubeClient
+from .youtube_auth import DeviceFlows, TokenStore
 
 # cyndilib (PTZ) is optional — without it the PTZ routes return 503 but the app
 # otherwise works. Helpful for environments where the wheel doesn't install.
@@ -121,7 +125,19 @@ def make_app() -> FastAPI:
         streamer=streamer,
         discovery=discovery,
         ptz=ptz,
+        youtube_services=_make_youtube(config_path),
     )
+
+
+def _make_youtube(config_path: Path) -> YouTubeServices:
+    """Always built; whether YouTube is enabled is read per request from config."""
+    http = httpx.AsyncClient(timeout=20.0)
+    client_cfg = lambda: Config.load(config_path).youtube
+    creds_path = credentials_path_for(config_path)
+    tokens = TokenStore(http, client_cfg, creds_path)
+    manager = BroadcastManager(YouTubeClient(http, tokens), tokens, creds_path)
+    flows = DeviceFlows(http, client_cfg, on_tokens=manager.complete_connection)
+    return YouTubeServices(manager=manager, flows=flows)
 
 
 app = make_app()

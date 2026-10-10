@@ -533,3 +533,100 @@ def test_setup_routes_require_auth(tmp_path, streamer, discovery):
     with TestClient(app) as c:
         assert c.get("/setup").status_code == 401
         assert c.post("/api/ward-credentials", data={"ward": "Primary"}).status_code == 401
+
+
+from ndi_rmtp.broadcasts import PrepareError, Prepared, YouTubeServices
+from ndi_rmtp.config import YoutubeConfig, update_ward_credentials
+
+AUTH = _basic("admin", "hunter2")
+
+
+@pytest.fixture
+def yt():
+    manager = MagicMock()
+    manager.prepare = AsyncMock(return_value=Prepared("b1", "api-key", "https://www.youtube.com/watch?v=b1"))
+    manager.finish = AsyncMock(return_value=None)
+    manager.status = AsyncMock(return_value={"mode": "api", "connected": True, "state": "live",
+                                             "watch_url": "u", "needs_reconnect": False, "channel_title": "C"})
+    return YouTubeServices(manager=manager, flows=MagicMock())
+
+
+def _yt_client(tmp_path, config, streamer, discovery, yt, *, enabled=True, linked=True, **ward_fields):
+    config_path = tmp_path / "config.toml"
+    if enabled:
+        config.youtube = YoutubeConfig(client_id="cid", client_secret="s")
+    config.save(config_path)
+    if linked:
+        ward_fields.setdefault("yt_refresh_token", "rt")
+        update_ward_credentials(credentials_path_for(config_path), "Primary",
+                                yt_stream_key="api-key", **ward_fields)
+    elif ward_fields:
+        update_ward_credentials(credentials_path_for(config_path), "Primary", **ward_fields)
+    return TestClient(build_app(config_path=config_path, streamer=streamer, discovery=discovery, youtube_services=yt))
+
+
+def test_start_prepares_broadcast_before_spawning(tmp_path, config, streamer, discovery, yt):
+    order = []
+    yt.manager.prepare.side_effect = lambda w: order.append("prepare") or Prepared("b1", "api-key", "u")
+    streamer.start.side_effect = lambda **kw: order.append("start")
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    r = c.post("/api/start", data={"source": "SRC1", "quality": "high"}, headers=AUTH)
+    assert r.status_code == 200 and order == ["prepare", "start"]
+    assert streamer.start.call_args.kwargs["stream_key"] == "api-key"
+
+
+def test_start_prepare_failure_is_424_and_does_not_spawn(tmp_path, config, streamer, discovery, yt):
+    yt.manager.prepare.side_effect = PrepareError("quota gone")
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    r = c.post("/api/start", data={"source": "SRC1", "quality": "high"}, headers=AUTH)
+    assert r.status_code == 424 and r.json()["detail"] == "quota gone"
+    streamer.start.assert_not_called()
+
+
+def test_start_skip_youtube_streams_to_ingest_key(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    r = c.post("/api/start", data={"source": "SRC1", "quality": "high", "skip_youtube": "true"}, headers=AUTH)
+    assert r.status_code == 200
+    yt.manager.prepare.assert_not_called()
+    assert streamer.start.call_args.kwargs["stream_key"] == "api-key"
+
+
+def test_start_needs_reconnect_offers_fallback(tmp_path, config, streamer, discovery, yt):
+    yt.manager.prepare.side_effect = PrepareError("This ward needs to reconnect YouTube")
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False, yt_needs_reconnect=True)
+    r = c.post("/api/start", data={"source": "SRC1", "quality": "high"}, headers=AUTH)
+    assert r.status_code == 424
+    streamer.start.assert_not_called()
+
+
+def test_start_unlinked_ward_uses_manual_key(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    c.post("/api/start", data={"source": "SRC1", "quality": "high"}, headers=AUTH)
+    yt.manager.prepare.assert_not_called()
+    assert streamer.start.call_args.kwargs["stream_key"] == "abc-key"
+
+
+def test_youtube_disabled_ignores_linked_ward(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, enabled=False)
+    c.post("/api/start", data={"source": "SRC1", "quality": "high"}, headers=AUTH)
+    yt.manager.prepare.assert_not_called()
+    assert streamer.start.call_args.kwargs["stream_key"] == "abc-key"
+
+
+def test_stop_finishes_after_streamer_stops(tmp_path, config, streamer, discovery, yt):
+    order = []
+    streamer.stop.side_effect = lambda: order.append("stop")
+    yt.manager.finish.side_effect = lambda w: order.append("finish") or "may still show as live"
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    r = c.post("/api/stop", headers=AUTH)
+    assert order == ["stop", "finish"] and r.json()["warning"] == "may still show as live"
+
+
+def test_api_youtube_uses_api_status_for_linked_ward(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    assert c.get("/api/youtube", headers=AUTH).json()["mode"] == "api"
+
+
+def test_api_youtube_scrape_mode_for_unlinked_ward(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    assert c.get("/api/youtube", headers=AUTH).json()["mode"] == "scrape"

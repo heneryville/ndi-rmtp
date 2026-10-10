@@ -105,16 +105,21 @@ ward guards go-live so a double-clicked Start can't create two broadcasts.
 **`prepare(ward) -> Prepared(broadcast_id, stream_key)`**, called by
 `/api/start` before `streamer.start()`:
 
-1. `list_broadcasts("active")` + `("upcoming")`. If one carries our marker and
-   is bound to the ward's stream, **reuse it** (covers: a Start whose encoder
-   failed, a crash, an app restart mid-meeting). Reuse means no duplicates
-   and the watch link doesn't change mid-meeting.
+1. `list_broadcasts("active")` + `("upcoming")`. If one carries our marker,
+   is bound to the ward's stream, and was scheduled within the last **12
+   hours**, **reuse it** (covers: a Start whose encoder failed, a crash, an
+   app restart mid-meeting). Reuse means no duplicates and the watch link
+   doesn't change mid-meeting. A marked, bound `active` broadcast older than
+   12 hours is last week's leftover (Stop never reached YouTube): `complete`
+   it first so it can't be reused and the sweep picks it up.
 2. Otherwise `create_broadcast` then `bind` to the ward's reusable stream.
 3. Return the stream's ingest key (cached in storage; re-read via
    `get_stream` if missing).
 
 **`finish(ward)`**, called by `/api/stop` *after* `streamer.stop()` returns:
-`complete(broadcast_id)`. `redundantTransition` → fine. `invalidTransition`
+`complete(broadcast_id)` for the broadcast the last `prepare` returned. If the
+app restarted since, it has no record, so it looks up the ward's marked, bound
+`active` broadcast instead. `redundantTransition` → fine. `invalidTransition`
 (never went live) → leave it; the next `prepare` reuses it. Any other error
 is logged and shown, but Stop itself always succeeds: the encoder is already
 down.
@@ -130,7 +135,7 @@ multiply calls.
 
 **Retention, `sweep()`:** runs 2 minutes after app start and every 6 hours.
 For each connected ward: `list_broadcasts("completed")`, keep those with the
-marker, `actualEndTime` older than 7 days, and not in the ward's keep list,
+marker, `actualEndTime` older than 7 days, and not in **any** ward's keep list (wards sharing a channel see the same broadcasts),
 then `delete_video` each. Marked `upcoming` broadcasts more than 7 days old (created but never went live) are deleted the same way. Listing stops after 10 pages (500 broadcasts), since results are newest-first. A 404 means already deleted (wards sharing a
 channel both see the same broadcast) and counts as success. Every deletion is
 logged with ward, video id and title. One ward's failure never stops the

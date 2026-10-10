@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +20,8 @@ from .config import PRIVACY_CHOICES, Config, Credentials, credentials_path_for, 
 from .ndi import NDIDiscovery
 from .streamer import Streamer
 from .youtube import LivenessChecker
-from .youtube_auth import AuthError
+from .youtube_api import YouTubeError
+from .youtube_auth import AuthError, ReauthRequired
 
 # PtzController depends on cyndilib (an optional dependency). Only import for
 # type hints when available; the runtime treats `ptz` as an opaque object.
@@ -152,6 +154,7 @@ def build_app(
                     else YOUTUBE_STUDIO_URL
                 ),
                 "has_channel_id": youtube.valid_channel_id(channel_id),
+                "youtube_enabled": youtube_services is not None and cfg.youtube.enabled,
             },
         )
 
@@ -280,6 +283,46 @@ def build_app(
         if privacy not in PRIVACY_CHOICES:
             raise HTTPException(status_code=400, detail=f"Privacy must be one of {', '.join(PRIVACY_CHOICES)}.")
         update_ward_credentials(credentials_path_for(config_path), ward, privacy=privacy)
+        return {"ok": True}
+
+    @app.get("/streams", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+    def streams_page(request: Request):
+        cfg = get_config()
+        if youtube_services is None or not cfg.youtube.enabled:
+            raise HTTPException(status_code=404)
+        return templates.TemplateResponse(request, "streams.html", {"config": cfg})
+
+    @app.get("/api/youtube/streams", dependencies=[Depends(require_auth)])
+    async def api_youtube_streams():
+        cfg = get_config()
+        if youtube_services is None or not cfg.youtube.enabled:
+            raise HTTPException(status_code=404)
+        rows = []
+        for w in cfg.stream.wards:
+            wc = _yt_ward(cfg, w.name)
+            if wc is None:
+                continue
+            row = {"ward": w.name, "channel_title": wc.yt_channel_title, "streams": [], "error": None}
+            try:
+                row["streams"] = await youtube_services.manager.past_streams(w.name)
+            except (YouTubeError, httpx.HTTPError, ReauthRequired) as e:
+                row["error"] = str(e) or type(e).__name__
+            rows.append(row)
+        return {"wards": rows, "last_sweep": youtube_services.manager.last_sweep}
+
+    @app.post("/api/youtube/streams/{video_id}/keep", dependencies=[Depends(require_auth)])
+    def api_youtube_keep(video_id: str, ward: str = Form(...), keep: bool = Form(...)):
+        _require_youtube_ward(ward)
+        youtube_services.manager.set_keep(ward, video_id, keep)
+        return {"ok": True}
+
+    @app.post("/api/youtube/streams/{video_id}/delete", dependencies=[Depends(require_auth)])
+    async def api_youtube_delete(video_id: str, ward: str = Form(...)):
+        _require_youtube_ward(ward)
+        try:
+            await youtube_services.manager.delete_now(ward, video_id)
+        except PrepareError as e:
+            raise HTTPException(status_code=409, detail=str(e))
         return {"ok": True}
 
     @app.get("/api/status", dependencies=[Depends(require_auth)])

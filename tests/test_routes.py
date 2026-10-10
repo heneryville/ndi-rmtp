@@ -633,6 +633,7 @@ def test_api_youtube_scrape_mode_for_unlinked_ward(tmp_path, config, streamer, d
 
 
 from ndi_rmtp.youtube_auth import FlowState
+from ndi_rmtp.youtube_api import YouTubeError
 
 
 def test_setup_hides_youtube_when_disabled(tmp_path, config, streamer, discovery, yt):
@@ -685,3 +686,34 @@ def test_privacy_saves_and_validates(tmp_path, config, streamer, discovery, yt):
     assert c.post("/api/youtube/privacy", data={"ward": "Primary", "privacy": "unlisted"}, headers=AUTH).status_code == 200
     assert Credentials.load(credentials_path_for(tmp_path / "config.toml")).for_ward("Primary").privacy == "unlisted"
     assert c.post("/api/youtube/privacy", data={"ward": "Primary", "privacy": "secret"}, headers=AUTH).status_code == 400
+
+
+def test_streams_page_404_when_disabled(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, enabled=False)
+    assert c.get("/streams", headers=AUTH).status_code == 404
+
+
+def test_streams_api_lists_linked_wards(tmp_path, config, streamer, discovery, yt):
+    yt.manager.past_streams = AsyncMock(return_value=[{"id": "v1", "title": "T", "kept": False}])
+    yt.manager.last_sweep = {"at": None, "error": None}
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, yt_channel_title="C")
+    data = c.get("/api/youtube/streams", headers=AUTH).json()
+    assert data["wards"][0]["ward"] == "Primary" and data["wards"][0]["streams"][0]["id"] == "v1"
+
+
+def test_streams_api_reports_per_ward_error(tmp_path, config, streamer, discovery, yt):
+    yt.manager.past_streams = AsyncMock(side_effect=YouTubeError("backendError", 500))
+    yt.manager.last_sweep = {"at": None, "error": None}
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    row = c.get("/api/youtube/streams", headers=AUTH).json()["wards"][0]
+    assert row["streams"] == [] and "backendError" in row["error"]
+
+
+def test_keep_and_delete(tmp_path, config, streamer, discovery, yt):
+    yt.manager.set_keep = MagicMock()
+    yt.manager.delete_now = AsyncMock(side_effect=PrepareError("is live"))
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    assert c.post("/api/youtube/streams/v1/keep", data={"ward": "Primary", "keep": "true"}, headers=AUTH).status_code == 200
+    yt.manager.set_keep.assert_called_once_with("Primary", "v1", True)
+    r = c.post("/api/youtube/streams/v1/delete", data={"ward": "Primary"}, headers=AUTH)
+    assert r.status_code == 409 and r.json()["detail"] == "is live"

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>Past streams — NDI → YouTube Relay</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body class="setup-page">
+  <header>
+    <h1>Past streams</h1>
+    <div id="state-badge"
+         title="Config generation — increments on each deploy.">v{{ config.config_version }}</div>
+    <a class="page-link" href="/">← Back to stream</a>
+  </header>
+
+  <div id="flash" class="flash flash-error" hidden></div>
+
+  <main>
+    <section class="card">
+      <p class="setup-intro">Broadcasts this appliance created. Each is deleted from YouTube
+        7 days after the meeting unless it's kept. Videos made any other way are never touched.</p>
+      <p class="hint" id="sweep-status"></p>
+    </section>
+    <div id="ward-list"><section class="card"><p>Loading…</p></section></div>
+  </main>
+
+  <footer class="site-footer">
+    Contact the Stake Technology Specialist for training or issues
+  </footer>
+
+  <script>
+    const _flashEl = document.getElementById("flash");
+    let _flashTimer = null;
+    function showFlash(msg) {
+      _flashEl.textContent = msg;
+      _flashEl.hidden = false;
+      clearTimeout(_flashTimer);
+      _flashTimer = setTimeout(() => { _flashEl.hidden = true; }, 8000);
+    }
+    const list = document.getElementById("ward-list");
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    async function post(url, fields) {
+      const r = await fetch(url, { method: "POST", body: new URLSearchParams(fields) });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${r.status}`); }
+    }
+    async function load() {
+      const data = await fetch("/api/youtube/streams").then(r => r.json());
+      const s = data.last_sweep || {};
+      document.getElementById("sweep-status").textContent =
+        s.error ? `Last cleanup failed: ${s.error}` : (s.at ? `Last cleanup: ${new Date(s.at).toLocaleString()}` : "");
+      if (!data.wards.length) { list.innerHTML = `<section class="card"><p>No wards are connected to YouTube. Connect one on <a href="/setup">Ward setup</a>.</p></section>`; return; }
+      list.innerHTML = data.wards.map(w => `
+        <section class="card">
+          <h2>${esc(w.ward)} <small class="hint">${esc(w.channel_title)}</small></h2>
+          ${w.error ? `<p class="err">Couldn't load from YouTube: ${esc(w.error)}</p>` : ""}
+          ${w.streams.length ? `<ul class="stream-list">${w.streams.map(v => `
+            <li data-ward="${esc(w.ward)}" data-id="${esc(v.id)}">
+              <a href="${esc(v.watch_url)}" target="_blank" rel="noopener">${esc(v.title)}</a>
+              <span class="hint">${esc(v.privacy)} · ${v.kept ? "kept" : (v.delete_on ? "deletes " + esc(v.delete_on) : esc(v.status))}</span>
+              <button type="button" class="btn-secondary act-keep" data-keep="${v.kept ? "false" : "true"}">${v.kept ? "Unkeep" : "Keep"}</button>
+              <button type="button" class="btn-secondary act-delete">Delete now</button>
+              <span class="confirm" hidden>Delete permanently? <button type="button" class="btn-secondary act-confirm">Yes, delete</button></span>
+            </li>`).join("")}</ul>` : (w.error ? "" : "<p class='hint'>No broadcasts yet.</p>")}
+        </section>`).join("");
+    }
+    list.addEventListener("click", async (evt) => {
+      const li = evt.target.closest("li[data-id]");
+      if (!li) return;
+      const { ward, id } = li.dataset;
+      try {
+        if (evt.target.classList.contains("act-keep")) {
+          await post(`/api/youtube/streams/${encodeURIComponent(id)}/keep`, { ward, keep: evt.target.dataset.keep });
+        } else if (evt.target.classList.contains("act-delete")) {
+          li.querySelector(".confirm").hidden = false; return;  // in-page confirm; never a browser dialog
+        } else if (evt.target.classList.contains("act-confirm")) {
+          await post(`/api/youtube/streams/${encodeURIComponent(id)}/delete`, { ward });
+        } else return;
+        await load();
+      } catch (e) { showFlash(e.message); }
+    });
+    load().catch(e => showFlash(`Couldn't load streams: ${e.message}`));
+  </script>
+</body>
+</html>

@@ -495,6 +495,11 @@ body[data-state="STOPPING"] select[name="active_ward"] {
   color: #4ade80; border: 1px solid #1e3a2a; background: #0a2517;
   border-radius: 999px; padding: 0.25rem 0.6rem;
 }
+.chip-copy {
+  font: inherit; font-size: 0.78rem; white-space: nowrap; cursor: pointer;
+  color: inherit; border: 1px solid #2a3140; background: transparent;
+  border-radius: 999px; padding: 0.25rem 0.6rem;
+}
 
 .yt-ok-note {
   color: #86efac; background: #0a2517; border: 1px solid #1e3a2a;
@@ -587,3 +592,11 @@ body.setup-page { padding-bottom: 1.5rem; }
 /* YouTube connect on /setup */
 .yt-connect { display: grid; gap: .5rem; margin-bottom: 1rem; }
 .yt-code-value { font-size: 1.4rem; letter-spacing: .1em; }
+
+/* Past streams */
+.stream-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+.stream-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem;
+  padding-bottom: .75rem; border-bottom: 1px solid #2a3140; }
+.stream-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+.stream-list a { color: inherit; flex: 1 1 100%; }
+.stream-list .hint { flex: 1 1 auto; }

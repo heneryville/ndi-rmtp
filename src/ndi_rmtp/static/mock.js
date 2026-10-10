@@ -126,6 +126,15 @@
     // without a real channel. `?yt=<state>` pins one.
     if (u.startsWith("/api/youtube")) {
       const pinned = new URLSearchParams(location.search).get("yt");
+      // `?yt=api` fakes a ward connected through OAuth.
+      if (pinned === "api") {
+        const uptime = mock.started_at ? (Date.now() - mock.started_at) / 1000 : 0;
+        return { status: 200, json: {
+          mode: "api", connected: true, needs_reconnect: false, channel_title: "Mock Ward Channel",
+          state: mock.state === "STREAMING" && uptime > 15 ? "live" : (mock.state === "IDLE" ? "none" : "ready"),
+          watch_url: mock.state === "IDLE" ? "" : "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        } };
+      }
       const state = pinned || (mock.state === "STREAMING" ? "not_visible" : "scheduled");
       return {
         status: 200,

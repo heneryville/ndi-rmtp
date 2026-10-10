@@ -717,3 +717,33 @@ def test_keep_and_delete(tmp_path, config, streamer, discovery, yt):
     yt.manager.set_keep.assert_called_once_with("Primary", "v1", True)
     r = c.post("/api/youtube/streams/v1/delete", data={"ward": "Primary"}, headers=AUTH)
     assert r.status_code == 409 and r.json()["detail"] == "is live"
+
+
+def test_index_renders_with_youtube_enabled(tmp_path, config, streamer, discovery, yt):
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    html = c.get("/", headers=AUTH).text
+    assert 'id="yt-api-card"' in html and "/streams" in html
+
+
+def test_streams_api_survives_token_refresh_failure(tmp_path, config, streamer, discovery, yt):
+    from ndi_rmtp.youtube_auth import AuthError
+    yt.manager.past_streams = AsyncMock(side_effect=AuthError("token refresh failed: HTTP 401"))
+    yt.manager.last_sweep = {"at": None, "error": None}
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    row = c.get("/api/youtube/streams", headers=AUTH).json()["wards"][0]
+    assert "401" in row["error"]
+
+
+def test_delete_now_youtube_failure_is_502(tmp_path, config, streamer, discovery, yt):
+    import httpx
+    yt.manager.delete_now = AsyncMock(side_effect=httpx.ConnectError("down"))
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    r = c.post("/api/youtube/streams/v1/delete", data={"ward": "Primary"}, headers=AUTH)
+    assert r.status_code == 502
+
+
+def test_connect_network_failure_is_502(tmp_path, config, streamer, discovery, yt):
+    import httpx
+    yt.flows.begin = AsyncMock(side_effect=httpx.ConnectError("down"))
+    c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
+    assert c.post("/api/youtube/connect", data={"ward": "Primary"}, headers=AUTH).status_code == 502

@@ -30,6 +30,9 @@ if False:  # TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+# Everything a YouTube call can raise that isn't a programming error.
+_YT_FAILURES = (YouTubeError, httpx.HTTPError, ReauthRequired, AuthError)
+
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -264,6 +267,8 @@ def build_app(
             return (await youtube_services.flows.begin(ward)).to_dict()
         except AuthError as e:
             raise HTTPException(status_code=502, detail=str(e))
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Couldn't reach Google ({e}).")
 
     @app.get("/api/youtube/connect", dependencies=[Depends(require_auth)])
     def api_youtube_connect_status(ward: str):
@@ -305,7 +310,7 @@ def build_app(
             row = {"ward": w.name, "channel_title": wc.yt_channel_title, "streams": [], "error": None}
             try:
                 row["streams"] = await youtube_services.manager.past_streams(w.name)
-            except (YouTubeError, httpx.HTTPError, ReauthRequired) as e:
+            except _YT_FAILURES as e:
                 row["error"] = str(e) or type(e).__name__
             rows.append(row)
         return {"wards": rows, "last_sweep": youtube_services.manager.last_sweep}
@@ -323,6 +328,8 @@ def build_app(
             await youtube_services.manager.delete_now(ward, video_id)
         except PrepareError as e:
             raise HTTPException(status_code=409, detail=str(e))
+        except _YT_FAILURES as e:
+            raise HTTPException(status_code=502, detail=f"YouTube couldn't delete it: {e}")
         return {"ok": True}
 
     @app.get("/api/status", dependencies=[Depends(require_auth)])

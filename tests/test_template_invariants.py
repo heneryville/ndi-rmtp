@@ -137,3 +137,19 @@ def test_index_does_not_inline_ptz_script(symbol):
     assert symbol not in _script_source(_template_source()), (
         f"index.html inlines `{symbol}`, which static/ptz.js also defines."
     )
+
+
+def test_api_mode_elements_present():
+    html = _template_source()
+    for el_id in ("yt-api-card", "yt-api-help", "yt-fallback-btn"):
+        assert f'id="{el_id}"' in html
+    assert "skip_youtube" in _script_source(html)
+    assert '_ytMode === "api"' in _script_source(html)
+
+
+def test_state_change_repolls_youtube():
+    # The poll interval is picked from the state at schedule time; without a re-poll on
+    # each state change the live pill lags up to a minute behind Start.
+    script = _script_source(_template_source())
+    m = re.search(r'if \(data\.state !== _prevState\) \{(.*?)\n        \}', script, re.S)
+    assert m and "pollYouTube" in m.group(1)

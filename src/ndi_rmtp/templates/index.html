@@ -119,6 +119,19 @@
       </div>
     </section>
 
+    {# Connected wards: the appliance creates the broadcast itself, so no control-room step. #}
+    <section class="card setup-only" id="yt-api-card" hidden>
+      <h2>YouTube</h2>
+      <div class="yt-line">
+        <span class="yt-dot" aria-hidden="true"></span>
+        <div class="yt-body">
+          <div class="yt-headline" id="yt-api-headline">Connected</div>
+          <div class="yt-sub" id="yt-api-note">Start creates today's broadcast automatically.</div>
+        </div>
+      </div>
+      <button type="button" class="btn-secondary" id="yt-fallback-btn" hidden>Start without YouTube setup</button>
+    </section>
+
     <!-- =====================================================================
          STREAMING PAGE  (visible when body[data-state] ∈ STARTING/STREAMING/STOPPING)
          ================================================================= -->
@@ -132,7 +145,9 @@
       <div class="chip-right">
         {# Only ever shown when we have positively seen the stream live.
            Absence means "we cannot tell", never "you are not live". #}
+        <span class="yt-api-status hint" hidden></span>
         <a class="chip-live" id="yt-live-pill" href="#" target="_blank" rel="noopener" hidden>✓ Live on YouTube</a>
+        <button type="button" class="chip-copy" id="yt-copy-btn" hidden>Copy link</button>
         <div class="chip-uptime">00:00:00</div>
       </div>
     </section>
@@ -166,6 +181,12 @@
           help — if the broadcast does not exist, there is nothing for YouTube to publish to.
         </small>
       </div>
+    </section>
+
+    {# API mode observes the broadcast directly, so a negative here is real (see youtube.py). #}
+    <section class="card streaming-only" id="yt-api-help" hidden>
+      <h2>YouTube hasn't started the broadcast</h2>
+      <p class="yt-sub">The encoder is sending, but YouTube still hasn't gone live. Try Stop, then Start.</p>
     </section>
 
     {# Shared with /camera — see templates/_ptz.html. On this page the card
@@ -226,6 +247,7 @@
 
     const _flashEl = document.getElementById("flash");
     let _flashTimer = null;
+    let _prevState = null;
     function showFlash(msg) {
       _flashEl.textContent = msg;
       _flashEl.hidden = false;
@@ -242,6 +264,7 @@
         const data = JSON.parse(xhr.responseText);
         if (data && data.detail) msg = data.detail;
       } catch (_) { /* leave generic fallback */ }
+      if (evt.detail.pathInfo?.requestPath === "/api/start" && xhr.status === 424 && ytFallback) ytFallback.hidden = false;
       showFlash(msg);
     });
 
@@ -273,6 +296,7 @@
     if (wardSelect && chipWard) {
       wardSelect.addEventListener("change", () => {
         chipWard.textContent = wardSelect.value || "—";
+        setTimeout(() => pollYouTube(), 300);
       });
     }
 
@@ -321,6 +345,11 @@
       const region = document.getElementById("status-region");
       try {
         const data = JSON.parse(evt.detail.xhr.responseText);
+        _lastUptime = data.uptime_s || 0;
+        if (data.state !== _prevState) {
+          _prevState = data.state;
+          if (typeof pollYouTube === "function") pollYouTube().then(scheduleYouTube);
+        }
         const stateLower = data.state.toLowerCase();
         document.body.dataset.state = data.state;
         document.body.dataset.muted = data.muted ? "true" : "false";
@@ -414,6 +443,32 @@
                      "No channel ID is set, so we cannot look. Streaming is unaffected."],
     };
 
+    const ytApiCard = document.getElementById("yt-api-card");
+    const ytApiHelp = document.getElementById("yt-api-help");
+    const ytApiStatus = document.querySelector(".yt-api-status");
+    const ytCopy = document.getElementById("yt-copy-btn");
+    const ytFallback = document.getElementById("yt-fallback-btn");
+    let _ytMode = "scrape";
+    let _lastUptime = 0;
+
+    function renderApi(data) {
+      ytCard.hidden = true; ytHelp.hidden = true; ytApiCard.hidden = false;
+      document.getElementById("yt-api-headline").textContent = data.needs_reconnect
+        ? "YouTube sign-in stopped working" : `Connected to ${data.channel_title || "YouTube"}`;
+      document.getElementById("yt-api-note").textContent = data.needs_reconnect
+        ? "Reconnect on Ward setup, or use Start without YouTube setup."
+        : "Start creates today's broadcast automatically.";
+      const live = data.state === "live";
+      ytPill.hidden = !live;
+      if (live) ytPill.href = data.watch_url;
+      ytCopy.hidden = !data.watch_url;
+      ytCopy.dataset.url = data.watch_url || "";
+      const streaming = document.body.dataset.state === "STREAMING" || document.body.dataset.state === "STARTING";
+      ytApiStatus.hidden = !streaming || live;
+      ytApiStatus.textContent = data.state === "none" ? "Creating broadcast…" : "Waiting for YouTube…";
+      ytApiHelp.hidden = !(document.body.dataset.state === "STREAMING" && !live && _lastUptime > 120);
+    }
+
     async function pollYouTube() {
       let data;
       try {
@@ -421,6 +476,9 @@
         if (!r.ok) return;
         data = await r.json();
       } catch (_) { return; }   // offline: leave the last render in place
+      _ytMode = data.mode || "scrape";
+      if (_ytMode === "api") { renderApi(data); return; }
+      ytApiCard.hidden = true; ytApiHelp.hidden = true; ytCard.hidden = false;
 
       const [headline, note] = YT_COPY[data.state] || YT_COPY.unavailable;
       if (ytCard) ytCard.dataset.yt = data.state;
@@ -453,11 +511,12 @@
     let _ytTimer = null;
     function scheduleYouTube() {
       clearTimeout(_ytTimer);
-      const streaming = document.body.dataset.state === "STREAMING";
+      const active = ["STARTING", "STREAMING"].includes(document.body.dataset.state);
+      const delay = _ytMode === "api" ? (active ? 10000 : 60000) : (document.body.dataset.state === "STREAMING" ? 30000 : 120000);
       _ytTimer = setTimeout(async () => {
         await pollYouTube();
         scheduleYouTube();
-      }, streaming ? 30000 : 120000);
+      }, delay);
     }
     pollYouTube().then(scheduleYouTube);
 
@@ -499,6 +558,28 @@
         }
       });
     }
+
+    ytCopy?.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(ytCopy.dataset.url); ytCopy.textContent = "Copied"; }
+      catch (_) { showFlash(ytCopy.dataset.url); }
+      setTimeout(() => { ytCopy.textContent = "Copy link"; }, 2000);
+    });
+    ytFallback?.addEventListener("click", async () => {
+      const form = document.getElementById("start-form");
+      const body = new FormData(form);
+      body.set("skip_youtube", "true");
+      const r = await fetch("/api/start", { method: "POST", body });
+      if (r.ok) { ytFallback.hidden = true; return; }
+      const d = await r.json().catch(() => ({}));
+      showFlash(d.detail || `Start failed (HTTP ${r.status}).`);
+    });
+    document.body.addEventListener("htmx:afterRequest", (evt) => {
+      if (!evt.detail?.successful) return;
+      const path = evt.detail.pathInfo?.requestPath;
+      if (path === "/api/start") ytFallback.hidden = true;
+      if (path !== "/api/stop") return;
+      try { const d = JSON.parse(evt.detail.xhr.responseText); if (d.warning) showFlash(d.warning); } catch (_) {}
+    });
 
     // Convert /api/sources JSON into <option>s on the source <select>
     document.body.addEventListener("htmx:afterRequest", (evt) => {

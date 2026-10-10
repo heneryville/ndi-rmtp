@@ -79,7 +79,12 @@ class YouTubeClient:
         if resp.status_code == 404 and ok_404:
             return {}
         if resp.status_code >= 400:
-            err = (resp.json() if resp.content else {}).get("error", {})
+            try:
+                err = (resp.json() if resp.content else {}).get("error", {})
+            except ValueError:
+                err = {}  # non-JSON (proxy/HTML) error page
+            if not isinstance(err, dict):
+                err = {"status": str(err)}
             errors = err.get("errors") or [{}]
             raise YouTubeError(errors[0].get("reason") or str(err.get("status") or "unknown"),
                                resp.status_code, err.get("message", ""))
@@ -148,6 +153,10 @@ class YouTubeClient:
     async def complete(self, ward: str, broadcast_id: str) -> None:
         await self._call(ward, "POST", "liveBroadcasts/transition",
                          params={"part": "status", "id": broadcast_id, "broadcastStatus": "complete"})
+
+    async def delete_broadcast(self, ward: str, broadcast_id: str) -> None:
+        """For broadcasts that never went live (no video yet)."""
+        await self._call(ward, "DELETE", "liveBroadcasts", params={"id": broadcast_id}, ok_404=True)
 
     async def delete_video(self, ward: str, video_id: str) -> None:
         await self._call(ward, "DELETE", "videos", params={"id": video_id}, ok_404=True)

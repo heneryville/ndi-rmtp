@@ -118,3 +118,18 @@ async def test_complete_posts_transition():
 async def test_unmarked_broadcast_is_not_ours():
     h = lambda r: httpx.Response(200, json={"items": [_bc(desc="streamed from OBS")]})
     assert (await _client(h).get_broadcast("W", "b1")).is_ours is False
+
+
+async def test_non_json_error_body_is_youtube_error():
+    with pytest.raises(YouTubeError) as e:
+        await _client(lambda r: httpx.Response(503, text="<html>down</html>")).get_broadcast("W", "b1")
+    assert e.value.status == 503
+
+
+async def test_delete_broadcast_uses_live_broadcasts_and_tolerates_404():
+    seen = {}
+    def handler(req):
+        seen["method"], seen["path"] = req.method, req.url.path
+        return httpx.Response(404, json={"error": {"errors": [{"reason": "liveBroadcastNotFound"}]}})
+    await _client(handler).delete_broadcast("W", "b1")
+    assert seen == {"method": "DELETE", "path": "/youtube/v3/liveBroadcasts"}

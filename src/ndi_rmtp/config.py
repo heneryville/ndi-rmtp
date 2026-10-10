@@ -5,6 +5,7 @@ import os
 import secrets
 import string
 import tempfile
+import threading
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -22,6 +23,8 @@ PASSWORD_LEN = 12
 # them on the next deploy — and wipe them with placeholder text on any clone
 # that lacks the git-ignored config.<deployment>.toml.
 CREDENTIALS_FILENAME = "credentials.toml"
+# Sync routes run in the threadpool alongside event-loop writers, so read-modify-write needs a lock.
+CREDENTIALS_LOCK = threading.RLock()
 
 
 @dataclass
@@ -203,13 +206,14 @@ class Credentials:
 
 
 def update_ward_credentials(path: Path, ward: str, **changes) -> WardCredentials:
-    """Load, change one ward's fields, save. Synchronous so no await can interleave."""
-    creds = Credentials.load(path)
-    entry = creds.wards.setdefault(ward, WardCredentials())
-    for name, value in changes.items():
-        setattr(entry, name, value)
-    creds.save(path)
-    return entry
+    """Load, change one ward's fields, save, under CREDENTIALS_LOCK."""
+    with CREDENTIALS_LOCK:
+        creds = Credentials.load(path)
+        entry = creds.wards.setdefault(ward, WardCredentials())
+        for name, value in changes.items():
+            setattr(entry, name, value)
+        creds.save(path)
+        return entry
 
 
 @dataclass

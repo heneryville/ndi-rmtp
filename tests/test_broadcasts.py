@@ -21,6 +21,7 @@ class FakeClient:
     def __init__(self):
         self.lists = {"active": [], "upcoming": [], "completed": []}
         self.created, self.bound, self.completed, self.deleted = [], [], [], []
+        self.deleted_broadcasts = []
         self.fail_on = {}
         self.broadcasts = {}
 
@@ -56,6 +57,9 @@ class FakeClient:
     async def complete(self, ward, bid):
         self._maybe_fail("complete")
         self.completed.append(bid)
+
+    async def delete_broadcast(self, ward, bid):
+        self.deleted_broadcasts.append(bid)
 
     async def delete_video(self, ward, vid):
         self._maybe_fail("delete")
@@ -226,7 +230,7 @@ async def test_sweep_deletes_stale_upcoming_never_live(setup):
     mgr, client, _ = setup
     client.lists["upcoming"] = [bc("never", start=NOW - timedelta(days=8)), bc("fresh", start=NOW)]
     await mgr.sweep()
-    assert client.deleted == ["never"]
+    assert client.deleted_broadcasts == ["never"]
 
 
 async def test_sweep_respects_keep_from_any_ward(setup):
@@ -294,3 +298,50 @@ async def test_delete_now_refuses_live_broadcast(setup):
     client.broadcasts["live1"] = bc("live1", status="live")
     with pytest.raises(PrepareError):
         await mgr.delete_now("W", "live1")
+
+
+async def test_prepare_deletes_stale_upcoming_so_it_cannot_auto_start(setup):
+    mgr, client, _ = setup
+    client.lists["upcoming"] = [bc("stale", start=NOW - timedelta(days=7))]
+    p = await mgr.prepare("W")
+    assert client.deleted_broadcasts == ["stale"] and p.broadcast_id == "new1"
+
+
+async def test_prepare_survives_failed_stale_complete(setup):
+    mgr, client, _ = setup
+    client.lists["active"] = [bc("lastweek", status="live", start=NOW - timedelta(days=7))]
+    client.fail_on["complete"] = YouTubeError("invalidTransition", 403)
+    assert (await mgr.prepare("W")).broadcast_id == "new1"
+
+
+async def test_prepare_reuses_recorded_broadcast_without_listing(setup):
+    # The list may lag a just-created broadcast; the in-memory record must win.
+    mgr, client, _ = setup
+    first = await mgr.prepare("W")
+    client.lists["upcoming"] = []
+    client.broadcasts[first.broadcast_id] = bc(first.broadcast_id, status="ready")
+    assert (await mgr.prepare("W")).broadcast_id == first.broadcast_id
+    assert len(client.created) == 1
+
+
+async def test_started_ward_survives_ward_switch(setup):
+    mgr, client, _ = setup
+    await mgr.prepare("W")
+    assert mgr.started_ward == "W"
+    await mgr.finish("W")
+    assert mgr.started_ward is None
+
+
+async def test_manual_start_is_not_finished_and_reports_scrape(setup):
+    mgr, client, _ = setup
+    mgr.mark_manual("W")
+    assert mgr.is_manual("W") and mgr.started_ward == "W"
+    assert await mgr.finish("W") is None
+    assert client.completed == [] and not mgr.is_manual("W")
+
+
+async def test_sweep_deletes_stale_upcoming_with_live_broadcasts_delete(setup):
+    mgr, client, _ = setup
+    client.lists["upcoming"] = [bc("never", start=NOW - timedelta(days=8))]
+    await mgr.sweep()
+    assert client.deleted_broadcasts == ["never"] and client.deleted == []

@@ -300,3 +300,18 @@ def test_config_save_never_writes_youtube_ward_fields(tmp_path):
     Config.load(cfg_path).save(cfg_path)
     text = cfg_path.read_text()
     assert "SECRET" not in text and "yt_" not in text
+
+
+def test_concurrent_credential_updates_do_not_lose_fields(tmp_path):
+    import threading
+    path = tmp_path / "credentials.toml"
+    update_ward_credentials(path, "W", yt_refresh_token="rt")
+    def worker(i):
+        for _ in range(20):
+            update_ward_credentials(path, "W", privacy=("public", "unlisted")[i % 2])
+            update_ward_credentials(path, f"X{i}", key=f"k{i}")
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    creds = Credentials.load(path)
+    assert creds.for_ward("W").yt_refresh_token == "rt"
+    assert all(creds.for_ward(f"X{i}").key == f"k{i}" for i in range(6))

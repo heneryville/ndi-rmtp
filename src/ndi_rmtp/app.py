@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from . import youtube
 from .broadcasts import PrepareError, YouTubeServices
 from .auth import make_auth_dependency
-from .config import PRIVACY_CHOICES, Config, Credentials, credentials_path_for, update_ward_credentials
+from .config import CREDENTIALS_LOCK, PRIVACY_CHOICES, Config, Credentials, credentials_path_for, update_ward_credentials
 from .ndi import NDIDiscovery
 from .streamer import Streamer
 from .youtube import LivenessChecker
@@ -233,7 +233,6 @@ def build_app(
             )
 
         creds_path = credentials_path_for(config_path)
-        creds = Credentials.load(creds_path)
         # A blank key means "leave it alone", not "erase it" — the form never
         # shows the current key, so an untouched field must not wipe it. Erasing
         # is a separate, explicit action (send key="-").
@@ -242,8 +241,10 @@ def build_app(
             new_key = ""
         elif key.strip():
             new_key = key.strip()
-        creds.set_ward(ward, key=new_key, channel_id=channel_id)
-        creds.save(creds_path)
+        with CREDENTIALS_LOCK:
+            creds = Credentials.load(creds_path)
+            creds.set_ward(ward, key=new_key, channel_id=channel_id)
+            creds.save(creds_path)
         logger.info(
             "updated credentials for ward %r (key %s, channel_id %s)",
             ward,
@@ -358,7 +359,8 @@ def build_app(
         """
         cfg = get_config()
         ward = cfg.stream.active()
-        if ward is not None and _yt_ward(cfg, ward.name) is not None:
+        if ward is not None and _yt_ward(cfg, ward.name) is not None \
+                and not youtube_services.manager.is_manual(ward.name):
             return await youtube_services.manager.status(ward.name)
         channel_id = ward.channel_id if ward else ""
         result = await liveness.check(channel_id)
@@ -407,7 +409,9 @@ def build_app(
         yt_ward = _yt_ward(cfg, active.name)
         if yt_ward is not None:
             if skip_youtube:
-                stream_key = yt_ward.yt_stream_key or active.key
+                # Studio's own broadcast listens on the pasted key, so prefer it over the API stream.
+                stream_key = active.key or yt_ward.yt_stream_key
+                youtube_services.manager.mark_manual(active.name)
             else:
                 try:
                     prepared = await youtube_services.manager.prepare(active.name)
@@ -442,8 +446,9 @@ def build_app(
         await streamer.stop()
         cfg = get_config()
         warning = None
-        if _yt_ward(cfg, cfg.stream.active_ward) is not None:
-            warning = await youtube_services.manager.finish(cfg.stream.active_ward)
+        ward = (youtube_services.manager.started_ward if youtube_services else None) or cfg.stream.active_ward
+        if _yt_ward(cfg, ward) is not None:
+            warning = await youtube_services.manager.finish(ward)
         return {"ok": True, "warning": warning}
 
     @app.post("/api/mute", dependencies=[Depends(require_auth)])

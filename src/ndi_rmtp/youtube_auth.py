@@ -21,6 +21,15 @@ REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 REFRESH_MARGIN_S = 60
 
 
+def _json(resp: httpx.Response) -> dict:
+    """Google or a proxy can answer with HTML; treat that as an empty error body."""
+    try:
+        data = resp.json()
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 class ReauthRequired(Exception):
     """The ward's refresh token is missing or rejected; it must reconnect on /setup."""
 
@@ -58,7 +67,7 @@ class TokenStore:
             "client_id": client.client_id, "client_secret": client.client_secret,
             "refresh_token": refresh, "grant_type": "refresh_token",
         })
-        if resp.status_code == 400 and resp.json().get("error") == "invalid_grant":
+        if resp.status_code == 400 and _json(resp).get("error") == "invalid_grant":
             logger.warning("YouTube refresh token for %r was rejected; ward must reconnect", ward)
             update_ward_credentials(self._path, ward, yt_refresh_token="", yt_needs_reconnect=True)
             self.forget(ward)
@@ -80,7 +89,9 @@ class TokenStore:
         blank = WardCredentials()
         update_ward_credentials(
             self._path, ward,
-            **{f: getattr(blank, f) for f in WardCredentials.__dataclass_fields__ if f.startswith("yt_")},
+            # Keeps outlive the connection: dropping them would let the next sweep delete kept videos.
+            **{f: getattr(blank, f) for f in WardCredentials.__dataclass_fields__
+               if f.startswith("yt_") and f != "yt_keep"},
         )
         self.forget(ward)
 
@@ -129,8 +140,18 @@ class DeviceFlows:
         self._expires[ward] = self._clock() + float(d["expires_in"])
         st = FlowState("pending", d["user_code"], d["verification_url"], int(d["expires_in"]))
         self._states[ward] = st
-        self._tasks[ward] = asyncio.create_task(self._poll(ward, d["device_code"], float(d.get("interval", 5))))
+        self._tasks[ward] = asyncio.create_task(self._run(ward, d["device_code"], float(d.get("interval", 5))))
         return st
+
+    async def _run(self, ward: str, device_code: str, interval: float) -> None:
+        # A crashed poll would leave /setup showing "pending" forever.
+        try:
+            await self._poll(ward, device_code, interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("device flow for %r crashed", ward)
+            self._states[ward].state, self._states[ward].message = "error", f"Sign-in failed: {e}"
 
     async def _poll(self, ward: str, device_code: str, interval: float) -> None:
         client = self._client()
@@ -148,7 +169,7 @@ class DeviceFlows:
                 })
             except httpx.HTTPError:
                 continue  # transient; keep polling until the code expires
-            body = resp.json() if resp.content else {}
+            body = _json(resp)
             if resp.status_code == 200:
                 try:
                     await self._on_tokens(ward, body)

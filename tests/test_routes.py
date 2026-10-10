@@ -546,6 +546,8 @@ def yt():
     manager = MagicMock()
     manager.prepare = AsyncMock(return_value=Prepared("b1", "api-key", "https://www.youtube.com/watch?v=b1"))
     manager.finish = AsyncMock(return_value=None)
+    manager.started_ward = None
+    manager.is_manual = MagicMock(return_value=False)
     manager.status = AsyncMock(return_value={"mode": "api", "connected": True, "state": "live",
                                              "watch_url": "u", "needs_reconnect": False, "channel_title": "C"})
     return YouTubeServices(manager=manager, flows=MagicMock())
@@ -583,7 +585,8 @@ def test_start_prepare_failure_is_424_and_does_not_spawn(tmp_path, config, strea
     streamer.start.assert_not_called()
 
 
-def test_start_skip_youtube_streams_to_ingest_key(tmp_path, config, streamer, discovery, yt):
+def test_start_skip_youtube_uses_ingest_key_without_pasted_key(tmp_path, config, streamer, discovery, yt):
+    config.stream.wards[0].key = ""
     c = _yt_client(tmp_path, config, streamer, discovery, yt)
     r = c.post("/api/start", data={"source": "SRC1", "quality": "high", "skip_youtube": "true"}, headers=AUTH)
     assert r.status_code == 200
@@ -747,3 +750,29 @@ def test_connect_network_failure_is_502(tmp_path, config, streamer, discovery, y
     yt.flows.begin = AsyncMock(side_effect=httpx.ConnectError("down"))
     c = _yt_client(tmp_path, config, streamer, discovery, yt, linked=False)
     assert c.post("/api/youtube/connect", data={"ward": "Primary"}, headers=AUTH).status_code == 502
+
+
+def test_fallback_prefers_pasted_key(tmp_path, config, streamer, discovery, yt):
+    # Studio's default broadcast listens on the pasted key, not the appliance's API stream.
+    yt.manager.mark_manual = MagicMock()
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    c.post("/api/start", data={"source": "SRC1", "quality": "high", "skip_youtube": "true"}, headers=AUTH)
+    assert streamer.start.call_args.kwargs["stream_key"] == "abc-key"
+    yt.manager.mark_manual.assert_called_once_with("Primary")
+
+
+def test_stop_finishes_the_ward_that_started(tmp_path, config, streamer, discovery, yt):
+    yt.manager.started_ward = "Primary"
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    cfg = Config.load(tmp_path / "config.toml")
+    cfg.stream.wards.append(Ward(name="Other", key="k2"))
+    cfg.stream.active_ward = "Other"
+    cfg.save(tmp_path / "config.toml")
+    c.post("/api/stop", headers=AUTH)
+    yt.manager.finish.assert_awaited_once_with("Primary")
+
+
+def test_api_youtube_scrape_mode_after_manual_start(tmp_path, config, streamer, discovery, yt):
+    yt.manager.is_manual = MagicMock(return_value=True)
+    c = _yt_client(tmp_path, config, streamer, discovery, yt)
+    assert c.get("/api/youtube", headers=AUTH).json()["mode"] == "scrape"

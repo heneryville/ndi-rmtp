@@ -77,7 +77,7 @@ async def test_revoke_clears_youtube_fields_but_keeps_manual_key(tmp_path):
     store = TokenStore(_http(lambda r: seen.append(str(r.url)) or httpx.Response(200)), lambda: CLIENT, path)
     await store.revoke("W")
     w = Credentials.load(path).for_ward("W")
-    assert w.key == "manual" and not w.yt_linked and w.yt_stream_key == "" and w.yt_keep == []
+    assert w.key == "manual" and not w.yt_linked and w.yt_stream_key == ""
     assert seen and seen[0].startswith(REVOKE_URL)
 
 
@@ -159,3 +159,35 @@ async def test_device_flow_on_tokens_failure_is_error_state():
     await flows.begin("W"); await _drain(flows, "W")
     st = flows.state("W")
     assert st.state == "error" and "liveStreamingNotEnabled" in st.message
+
+
+async def test_revoke_keeps_the_keep_list(tmp_path):
+    # Kept recordings must survive a disconnect, or the next sweep deletes them.
+    path = tmp_path / "credentials.toml"
+    update_ward_credentials(path, "W", yt_refresh_token="rt", yt_keep=["v"])
+    await TokenStore(_http(lambda r: httpx.Response(200)), lambda: CLIENT, path).revoke("W")
+    assert Credentials.load(path).for_ward("W").yt_keep == ["v"]
+
+
+async def test_non_json_refresh_error_is_auth_error(tmp_path):
+    from ndi_rmtp.youtube_auth import AuthError
+    path = tmp_path / "credentials.toml"
+    update_ward_credentials(path, "W", yt_refresh_token="rt")
+    store = TokenStore(_http(lambda r: httpx.Response(502, text="<html>bad gateway</html>")), lambda: CLIENT, path)
+    with pytest.raises(AuthError):
+        await store.access_token("W")
+
+
+async def test_device_flow_non_json_poll_response_is_error_state():
+    async def on_tokens(w, t): pass
+    async def fake_sleep(s): pass
+
+    def handler(req):
+        if str(req.url) == DEVICE_CODE_URL:
+            return httpx.Response(200, json={"device_code": "dc", "user_code": "U", "verification_url": "v",
+                                             "expires_in": 1800, "interval": 5})
+        return httpx.Response(502, text="<html>bad gateway</html>")
+
+    flows = DeviceFlows(_http(handler), lambda: CLIENT, on_tokens, sleep=fake_sleep)
+    await flows.begin("W"); await _drain(flows, "W")
+    assert flows.state("W").state == "error"

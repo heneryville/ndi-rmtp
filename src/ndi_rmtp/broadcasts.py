@@ -24,6 +24,7 @@ SWEEP_INTERVAL_S = 6 * 3600
 STATUS_CACHE_S = 5.0
 TITLE_MAX = 100
 STREAM_TITLE = "ndi-rmtp appliance"
+_OPEN_STATES = ("created", "ready", "testStarting", "testing", "liveStarting", "live")
 
 _REASON_MESSAGES = {
     "liveStreamingNotEnabled": "This YouTube channel doesn't have live streaming turned on. Enable it in YouTube Studio (new channels wait 24 hours).",
@@ -64,6 +65,9 @@ class BroadcastManager:
         self._clock = clock
         self._locks: dict[str, asyncio.Lock] = {}
         self._active: dict[str, str] = {}
+        # The ward whose stream is running, so Stop ends it even if the selector changed.
+        self.started_ward: str | None = None
+        self._manual: set[str] = set()
         self._status_cache: dict[str, tuple[float, dict]] = {}
         self.last_sweep: dict = {"at": None, "error": None}
 
@@ -101,22 +105,47 @@ class BroadcastManager:
             except (httpx.HTTPError, AuthError) as e:
                 raise PrepareError(f"Couldn't reach YouTube ({e}).")
 
+    def mark_manual(self, ward: str) -> None:
+        """A Start that skipped the API: Stop must not end anything and status falls back to scraping."""
+        self._manual.add(ward)
+        self._active.pop(ward, None)
+        self.started_ward = ward
+
+    def is_manual(self, ward: str) -> bool:
+        return ward in self._manual
+
+    async def _recorded(self, ward: str) -> Broadcast | None:
+        # The list endpoint can lag a just-created broadcast; trust our own record first.
+        bid = self._active.get(ward)
+        if not bid:
+            return None
+        b = await self._client.get_broadcast(ward, bid)
+        if b and b.is_ours and self._recent(b) and b.life_cycle_status in _OPEN_STATES:
+            return b
+        return None
+
     async def _prepare(self, ward: str) -> Prepared:
         w = self._ward(ward)
         if not w.yt_connected:
             raise ReauthRequired(ward)
         stream_key = w.yt_stream_key or await self._client.get_stream_key(ward, w.yt_stream_id)
-        reuse = None
-        for status in ("active", "upcoming"):
+        reuse = await self._recorded(ward)
+        for status in ("active", "upcoming") if reuse is None else ():
             for b in await self._client.list_broadcasts(ward, status):
                 if not self._is_ours_on(b, w.yt_stream_id):
                     continue
                 if self._recent(b):
                     reuse = reuse or b
-                elif status == "active":
-                    # Last week's broadcast never got its Stop; end it so it can't be reused.
-                    logger.info("completing stale broadcast %s for %r", b.id, ward)
-                    await self._client.complete(ward, b.id)
+                    continue
+                # Stale leftovers stay bound to the reusable stream and could auto-start; clear them.
+                try:
+                    if status == "active":
+                        await self._client.complete(ward, b.id)
+                    else:
+                        await self._client.delete_broadcast(ward, b.id)
+                    logger.info("cleared stale %s broadcast %s for %r", status, b.id, ward)
+                except YouTubeError as e:
+                    logger.warning("couldn't clear stale broadcast %s for %r: %s", b.id, ward, e)
         if reuse is None:
             reuse = await self._client.create_broadcast(
                 ward, title=broadcast_title(ward, self._today()),
@@ -126,10 +155,17 @@ class BroadcastManager:
             await self._client.bind(ward, reuse.id, w.yt_stream_id)
             logger.info("created broadcast %s for %r", reuse.id, ward)
         self._active[ward] = reuse.id
+        self._manual.discard(ward)
+        self.started_ward = ward
         self._status_cache.pop(ward, None)
         return Prepared(reuse.id, stream_key, reuse.watch_url)
 
     async def finish(self, ward: str) -> str | None:
+        if self.started_ward == ward:
+            self.started_ward = None
+        if ward in self._manual:
+            self._manual.discard(ward)
+            return None
         try:
             bid = self._active.pop(ward, None)
             if bid is None:
@@ -190,7 +226,10 @@ class BroadcastManager:
                 for status in ("completed", "upcoming"):
                     for b in await self._client.list_broadcasts(name, status):
                         if b.is_ours and b.id not in kept and b.id not in deleted and self._expired(b):
-                            await self._client.delete_video(name, b.id)
+                            if b.life_cycle_status == "complete":
+                                await self._client.delete_video(name, b.id)
+                            else:
+                                await self._client.delete_broadcast(name, b.id)
                             logger.info("retention: deleted %s %r for ward %r", b.id, b.title, name)
                             deleted.append(b.id)
             except (YouTubeError, httpx.HTTPError, ReauthRequired, AuthError) as e:

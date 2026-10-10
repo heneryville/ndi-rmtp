@@ -36,6 +36,5 @@ uv.lock
 .playwright-mcp/
 .superpowers/
 
-# Appliance SSH credentials and deploy runbook: local only, never committed.
-ssh.md
-deploy.md
+# Appliance SSH password (sshpass -f); see ssh.md.
+.pi-password

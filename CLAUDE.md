@@ -173,8 +173,11 @@ on the LAN could then overwrite a key and take a ward off the air.
 ### YouTube integration (OAuth) creates the broadcast before the encoder
 
 Opt-in per ward. A ward signs in once on `/setup` via Google's device flow; its
-refresh token, channel and the appliance's reusable ingest stream key live in
-`credentials.toml` (`yt_*` fields). An empty `[youtube] client_id` hides the
+refresh token, channel and ingest stream live in `credentials.toml` (`yt_*`
+fields). On connect it binds to the existing stream behind the ward's pasted key
+(`liveStreams.list`), so one key serves API, fallback and OBS; it creates a new
+stream only when no pasted key matches. Wards sharing a stream are told apart by
+the `"<ward> sacrament meeting."` description prefix. An empty `[youtube] client_id` hides the
 whole feature and every ward streams from its pasted key as before. Setup:
 `docs/youtube-oauth-setup.md`.
 

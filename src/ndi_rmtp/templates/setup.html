@@ -54,7 +54,8 @@
       <div class="yt-connect" data-ward="{{ w.name }}">
         {% if w.yt_connected %}
         <p class="yt-connected">Connected to YouTube as <strong>{{ w.yt_channel_title }}</strong>.
-          Start creates and ends this ward's broadcast automatically.</p>
+          Start creates and ends this ward's broadcast automatically, on the stream key below.
+          If you change the key, Disconnect and Connect again so YouTube binds to it.</p>
         <label>Broadcast privacy
           <select class="yt-privacy">
             {% for p in privacy_choices %}
@@ -84,7 +85,6 @@
             data-ward="{{ w.name }}">
         <input type="hidden" name="ward" value="{{ w.name }}">
 
-        {% if not (youtube_enabled and w.yt_connected) %}
         <label>Stream key
           <input type="password" name="key" autocomplete="off" spellcheck="false"
                  placeholder="{% if w.has_key %}Saved — leave blank to keep it{% else %}Paste the key from YouTube Studio{% endif %}">
@@ -97,9 +97,6 @@
             {% endif %}
           </small>
         </label>
-        {% else %}
-        <p class="hint">The stream key is managed by YouTube while connected. Disconnect to use a pasted key.</p>
-        {% endif %}
 
         <label>YouTube channel ID <span class="optional">optional</span>
           <input type="text" name="channel_id" value="{{ w.channel_id }}"

@@ -105,6 +105,22 @@ class YouTubeClient:
         })
         return data["id"], data["cdn"]["ingestionInfo"]["streamName"]
 
+    async def find_stream_by_key(self, ward: str, key: str, max_pages: int = 5) -> str | None:
+        """The channel's existing stream whose ingest key is `key`, so the pasted key keeps working."""
+        token = None
+        for _ in range(max_pages):
+            params = {"part": "id,cdn", "mine": "true", "maxResults": "50"}
+            if token:
+                params["pageToken"] = token
+            data = await self._call(ward, "GET", "liveStreams", params=params)
+            for item in data.get("items") or []:
+                if item.get("cdn", {}).get("ingestionInfo", {}).get("streamName") == key:
+                    return item["id"]
+            token = data.get("nextPageToken")
+            if not token:
+                return None
+        return None
+
     async def get_stream_key(self, ward: str, stream_id: str) -> str:
         data = await self._call(ward, "GET", "liveStreams", params={"part": "cdn", "id": stream_id})
         items = data.get("items") or []

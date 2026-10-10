@@ -48,6 +48,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _description_prefix(ward: str) -> str:
+    return f"{ward} sacrament meeting."
+
+
 def broadcast_title(ward: str, day: date) -> str:
     suffix = f" Sacrament Meeting — {day:%b} {day.day}, {day.year}"
     return ward[: TITLE_MAX - len(suffix)] + suffix
@@ -56,8 +60,10 @@ def broadcast_title(ward: str, day: date) -> str:
 class BroadcastManager:
     def __init__(self, client: YouTubeClient, tokens: TokenStore, creds_path: Path,
                  now: Callable[[], datetime] = _utcnow, today: Callable[[], date] = date.today,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 pasted_key: Callable[[str], str] = lambda ward: ""):
         self._client = client
+        self._pasted_key = pasted_key
         self._tokens = tokens
         self._path = creds_path
         self._now = now
@@ -77,7 +83,11 @@ class BroadcastManager:
     async def complete_connection(self, ward: str, tokens: dict) -> None:
         self._tokens.seed(ward, tokens)
         channel_id, title = await self._client.my_channel(ward)
-        stream_id, key = await self._client.create_stream(ward, STREAM_TITLE)
+        # Bind to the stream behind the pasted key so one key works for API, fallback and OBS alike.
+        key = self._pasted_key(ward).strip()
+        stream_id = await self._client.find_stream_by_key(ward, key) if key and not key.startswith("REPLACE_WITH") else None
+        if stream_id is None:
+            stream_id, key = await self._client.create_stream(ward, STREAM_TITLE)
         update_ward_credentials(self._path, ward, channel_id=channel_id, yt_channel_title=title,
                                 yt_stream_id=stream_id, yt_stream_key=key)
         logger.info("ward %r connected to YouTube channel %r", ward, title)
@@ -87,8 +97,9 @@ class BroadcastManager:
         self._active.pop(ward, None)
         self._status_cache.pop(ward, None)
 
-    def _is_ours_on(self, b: Broadcast, stream_id: str) -> bool:
-        return b.is_ours and b.bound_stream_id == stream_id
+    def _is_ours_on(self, b: Broadcast, ward: str, stream_id: str) -> bool:
+        # Wards sharing a channel can share a stream; the description prefix says whose broadcast it is.
+        return b.is_ours and b.bound_stream_id == stream_id and b.description.startswith(_description_prefix(ward))
 
     def _recent(self, b: Broadcast) -> bool:
         return b.scheduled_start is not None and self._now() - b.scheduled_start < REUSE_WINDOW
@@ -120,7 +131,8 @@ class BroadcastManager:
         if not bid:
             return None
         b = await self._client.get_broadcast(ward, bid)
-        if b and b.is_ours and self._recent(b) and b.life_cycle_status in _OPEN_STATES:
+        if b and b.is_ours and b.description.startswith(_description_prefix(ward)) \
+                and self._recent(b) and b.life_cycle_status in _OPEN_STATES:
             return b
         return None
 
@@ -132,7 +144,7 @@ class BroadcastManager:
         reuse = await self._recorded(ward)
         for status in ("active", "upcoming") if reuse is None else ():
             for b in await self._client.list_broadcasts(ward, status):
-                if not self._is_ours_on(b, w.yt_stream_id):
+                if not self._is_ours_on(b, ward, w.yt_stream_id):
                     continue
                 if self._recent(b):
                     reuse = reuse or b
@@ -149,7 +161,7 @@ class BroadcastManager:
         if reuse is None:
             reuse = await self._client.create_broadcast(
                 ward, title=broadcast_title(ward, self._today()),
-                description=f"{ward} sacrament meeting.\n\n{MARKER_LINE}",
+                description=f"{_description_prefix(ward)}\n\n{MARKER_LINE}",
                 privacy=w.privacy, start=self._now(),
             )
             await self._client.bind(ward, reuse.id, w.yt_stream_id)
@@ -170,7 +182,7 @@ class BroadcastManager:
             bid = self._active.pop(ward, None)
             if bid is None:
                 stream_id = self._ward(ward).yt_stream_id
-                live = [b for b in await self._client.list_broadcasts(ward, "active") if self._is_ours_on(b, stream_id)]
+                live = [b for b in await self._client.list_broadcasts(ward, "active") if self._is_ours_on(b, ward, stream_id)]
                 if not live:
                     return None
                 bid = live[0].id

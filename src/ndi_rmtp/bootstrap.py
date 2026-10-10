@@ -135,7 +135,11 @@ def _make_youtube(config_path: Path) -> YouTubeServices:
     client_cfg = lambda: Config.load(config_path).youtube
     creds_path = credentials_path_for(config_path)
     tokens = TokenStore(http, client_cfg, creds_path)
-    manager = BroadcastManager(YouTubeClient(http, tokens), tokens, creds_path)
+    def pasted_key(ward: str) -> str:
+        found = Config.load(config_path).stream.find_ward(ward)
+        return found.key if found else ""
+
+    manager = BroadcastManager(YouTubeClient(http, tokens), tokens, creds_path, pasted_key=pasted_key)
     flows = DeviceFlows(http, client_cfg, on_tokens=manager.complete_connection)
     return YouTubeServices(manager=manager, flows=flows)
 

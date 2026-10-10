@@ -12,7 +12,7 @@ NOW = datetime(2026, 10, 11, 16, 0, tzinfo=timezone.utc)
 
 
 def bc(id, status="ready", stream="s1", ours=True, start=NOW, end=None, privacy="public"):
-    return Broadcast(id=id, title=f"title {id}", description=MARKER_LINE if ours else "obs",
+    return Broadcast(id=id, title=f"title {id}", description=f"W sacrament meeting.\n\n{MARKER_LINE}" if ours else "obs",
                      privacy=privacy, life_cycle_status=status, bound_stream_id=stream,
                      scheduled_start=start, actual_end=end)
 
@@ -30,7 +30,12 @@ class FakeClient:
             raise self.fail_on[name]
 
     async def my_channel(self, ward): return ("UCchan", "Ward Channel")
-    async def create_stream(self, ward, title): return ("s1", "ingest-key")
+    async def create_stream(self, ward, title):
+        self.streams_created = getattr(self, "streams_created", 0) + 1
+        return ("s1", "ingest-key")
+
+    async def find_stream_by_key(self, ward, key):
+        return {"pasted-key": "s-pasted"}.get(key)
     async def get_stream_key(self, ward, sid): return "ingest-key"
 
     async def list_broadcasts(self, ward, status, max_pages=10):
@@ -345,3 +350,30 @@ async def test_sweep_deletes_stale_upcoming_with_live_broadcasts_delete(setup):
     client.lists["upcoming"] = [bc("never", start=NOW - timedelta(days=8))]
     await mgr.sweep()
     assert client.deleted_broadcasts == ["never"] and client.deleted == []
+
+
+async def test_complete_connection_binds_to_the_pasted_key_stream(tmp_path):
+    path = tmp_path / "credentials.toml"
+    client = FakeClient()
+    mgr = BroadcastManager(client, FakeTokens(), path, pasted_key=lambda w: "pasted-key")
+    await mgr.complete_connection("W", {"refresh_token": "rt", "access_token": "a", "expires_in": 1})
+    w = Credentials.load(path).for_ward("W")
+    assert (w.yt_stream_id, w.yt_stream_key) == ("s-pasted", "pasted-key")
+    assert getattr(client, "streams_created", 0) == 0
+
+
+async def test_complete_connection_creates_stream_when_pasted_key_unknown(tmp_path):
+    path = tmp_path / "credentials.toml"
+    client = FakeClient()
+    mgr = BroadcastManager(client, FakeTokens(), path, pasted_key=lambda w: "not-on-this-channel")
+    await mgr.complete_connection("W", {"refresh_token": "rt", "access_token": "a", "expires_in": 1})
+    assert Credentials.load(path).for_ward("W").yt_stream_key == "ingest-key"
+
+
+async def test_prepare_never_reuses_another_wards_broadcast_on_a_shared_stream(setup):
+    mgr, client, _ = setup
+    other = bc("other-ward", status="live", start=NOW - timedelta(hours=1))
+    other.description = "Other Ward sacrament meeting.\n\n" + MARKER_LINE
+    client.lists["active"] = [other]
+    assert (await mgr.prepare("W")).broadcast_id == "new1"
+    assert client.completed == []  # recent, so not ours to end either

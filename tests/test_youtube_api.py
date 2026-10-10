@@ -133,3 +133,21 @@ async def test_delete_broadcast_uses_live_broadcasts_and_tolerates_404():
         return httpx.Response(404, json={"error": {"errors": [{"reason": "liveBroadcastNotFound"}]}})
     await _client(handler).delete_broadcast("W", "b1")
     assert seen == {"method": "DELETE", "path": "/youtube/v3/liveBroadcasts"}
+
+
+async def test_find_stream_by_key_pages_and_matches():
+    pages = []
+    def handler(req):
+        assert req.url.params["mine"] == "true"
+        pages.append(req.url.params.get("pageToken"))
+        if len(pages) == 1:
+            return httpx.Response(200, json={"items": [{"id": "s0", "cdn": {"ingestionInfo": {"streamName": "other"}}}],
+                                             "nextPageToken": "p1"})
+        return httpx.Response(200, json={"items": [{"id": "s9", "cdn": {"ingestionInfo": {"streamName": "pasted-key"}}}]})
+    assert await _client(handler).find_stream_by_key("W", "pasted-key") == "s9"
+    assert pages == [None, "p1"]
+
+
+async def test_find_stream_by_key_none_when_absent():
+    h = lambda r: httpx.Response(200, json={"items": []})
+    assert await _client(h).find_stream_by_key("W", "k") is None
